@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -31,6 +32,51 @@ class SyncService {
       await prefs.setString('device_id', id);
     }
     return id;
+  }
+
+  /// 上传本机新拍的商品图，下载其他手机传上来的图。
+  Future<String?> _syncImages(String url, String tk) async {
+    final db = await AppDb.instance.db;
+    final headers = {'authorization': 'Bearer $tk'};
+
+    final dirty = await db.query('products',
+        columns: ['barcode', 'image_path'], where: 'image_dirty = 1 AND image_path IS NOT NULL');
+    for (final r in dirty) {
+      final barcode = r['barcode'] as String;
+      final path = r['image_path'] as String;
+      final f = File(path);
+      if (!await f.exists()) {
+        await db.update('products', {'image_dirty': 0}, where: 'barcode = ?', whereArgs: [barcode]);
+        continue;
+      }
+      final resp = await http
+          .put(Uri.parse('$url/images/${Uri.encodeComponent(barcode)}'),
+              headers: {...headers, 'content-type': 'image/jpeg'}, body: await f.readAsBytes())
+          .timeout(const Duration(seconds: 30));
+      if (resp.statusCode != 200) return '图片上传失败：HTTP ${resp.statusCode}';
+      final ver = ((jsonDecode(resp.body) as Map)['image_ver'] as num).toInt();
+      // 上传期间如果又换了图，保持 dirty 等下次再传
+      await db.rawUpdate(
+          'UPDATE products SET image_dirty = 0, image_ver = ?, image_local_ver = ? WHERE barcode = ? AND image_path = ?',
+          [ver, ver, barcode, path]);
+    }
+
+    final need = await db.query('products',
+        columns: ['barcode', 'image_ver'], where: 'image_ver > image_local_ver AND image_dirty = 0', limit: 30);
+    for (final r in need) {
+      final barcode = r['barcode'] as String;
+      final resp = await http
+          .get(Uri.parse('$url/images/${Uri.encodeComponent(barcode)}'), headers: headers)
+          .timeout(const Duration(seconds: 30));
+      if (resp.statusCode == 404) {
+        await db.rawUpdate('UPDATE products SET image_local_ver = image_ver WHERE barcode = ?', [barcode]);
+        continue;
+      }
+      if (resp.statusCode != 200) return '图片下载失败：HTTP ${resp.statusCode}';
+      final ver = int.tryParse(resp.headers['x-image-ver'] ?? '') ?? (r['image_ver'] as num).toInt();
+      await AppDb.instance.saveImageBytes(barcode, resp.bodyBytes, fromServer: true, ver: ver);
+    }
+    return null;
   }
 
   /// 返回 null 表示成功（或未配置服务器），否则返回错误信息。
@@ -84,15 +130,17 @@ class SyncService {
               'SELECT COALESCE(SUM(delta),0) AS d FROM movements WHERE barcode = ? AND synced = 0', [p['barcode']]);
           final localStock = (p['stock'] as num).toInt() + (pending.first['d'] as num).toInt();
           await txn.rawInsert('''
-            INSERT INTO products(barcode, name, price_cents, stock, dirty) VALUES(?,?,?,?,0)
+            INSERT INTO products(barcode, name, price_cents, stock, dirty, image_ver) VALUES(?,?,?,?,0,?)
             ON CONFLICT(barcode) DO UPDATE SET
               name = CASE WHEN products.dirty = 1 THEN products.name ELSE excluded.name END,
               price_cents = CASE WHEN products.dirty = 1 THEN products.price_cents ELSE excluded.price_cents END,
-              stock = excluded.stock''', [p['barcode'], p['name'], p['price_cents'], localStock]);
+              stock = excluded.stock,
+              image_ver = MAX(products.image_ver, excluded.image_ver)''',
+              [p['barcode'], p['name'], p['price_cents'], localStock, (p['image_ver'] as num?)?.toInt() ?? 0]);
         }
       });
       await prefs.setInt('last_sync', (data['server_time'] as num).toInt());
-      return null;
+      return await _syncImages(url, await token);
     } catch (e) {
       return '同步失败：$e';
     } finally {
