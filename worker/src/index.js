@@ -7,6 +7,21 @@ const json = (data, status = 200) =>
     headers: { 'content-type': 'application/json; charset=utf-8' },
   });
 
+
+// 首次请求时自动建表（不需要单独执行 schema.sql）
+const SCHEMA = [
+  `CREATE TABLE IF NOT EXISTS products ( barcode TEXT PRIMARY KEY, name TEXT NOT NULL, price_cents INTEGER NOT NULL DEFAULT 0, stock INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL )`,
+  `CREATE INDEX IF NOT EXISTS idx_products_updated ON products(updated_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_movements_barcode ON movements(barcode)`,
+  `CREATE TABLE IF NOT EXISTS sales ( id TEXT PRIMARY KEY, total_cents INTEGER NOT NULL, items TEXT NOT NULL, device TEXT, created_at INTEGER NOT NULL )`,
+];
+let migrated = false;
+async function migrate(db) {
+  if (migrated) return;
+  await db.batch(SCHEMA.map((sql) => db.prepare(sql)));
+  migrated = true;
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -18,6 +33,7 @@ export default {
     }
 
     if (url.pathname === '/sync' && request.method === 'POST') {
+      await migrate(env.DB);
       return sync(await request.json(), env.DB);
     }
     return json({ error: 'not found' }, 404);
