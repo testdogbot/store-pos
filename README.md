@@ -27,7 +27,7 @@ cd worker
 npm install
 npx wrangler login
 npx wrangler d1 create store-pos        # 把输出的 database_id 填进 wrangler.toml
-npx wrangler d1 execute store-pos --remote --file=schema.sql
+# 表结构会在第一次同步时自动创建（也可手动：npx wrangler d1 execute store-pos --remote --file=schema.sql）
 npx wrangler secret put API_TOKEN       # 设一个店铺口令，App 里要填同一个
 npx wrangler deploy                     # 得到 https://store-pos.<你的子域>.workers.dev
 ```
