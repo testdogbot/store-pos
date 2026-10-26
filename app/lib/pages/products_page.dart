@@ -4,6 +4,7 @@ import '../db.dart';
 import '../models.dart';
 import '../sync.dart';
 import '../widgets/product_form.dart';
+import '../widgets/product_thumb.dart';
 
 class ProductsPage extends StatefulWidget {
   const ProductsPage({super.key});
@@ -59,6 +60,7 @@ class _ProductsPageState extends State<ProductsPage> {
               itemBuilder: (_, i) {
                 final p = _items[i];
                 return ListTile(
+                  leading: ProductThumb(p.imagePath),
                   title: Text(p.name),
                   subtitle: Text('${p.barcode}  ·  ${yuan(p.priceCents)}'),
                   trailing: Text('库存 ${p.stock}',
