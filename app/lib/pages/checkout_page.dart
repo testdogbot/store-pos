@@ -4,6 +4,7 @@ import '../db.dart';
 import '../models.dart';
 import '../sync.dart';
 import '../widgets/product_form.dart';
+import '../widgets/product_thumb.dart';
 import '../widgets/scan_input.dart';
 
 class CheckoutPage extends StatefulWidget {
@@ -78,6 +79,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                   itemBuilder: (_, idx) {
                     final item = _cart[idx];
                     return ListTile(
+                      leading: ProductThumb(item.product.imagePath),
                       title: Text(item.product.name),
                       subtitle: Text('${yuan(item.product.priceCents)}  ·  库存 ${item.product.stock}'),
                       trailing: Row(mainAxisSize: MainAxisSize.min, children: [
