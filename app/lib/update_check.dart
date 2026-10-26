@@ -1,8 +1,12 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:open_filex/open_filex.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'sync.dart';
@@ -38,6 +42,89 @@ Future<LatestRelease?> fetchLatest() async {
   }
 }
 
+/// App 内直接下载新版 APK（显示进度），下载完拉起系统安装界面，点「更新」即可覆盖安装。
+Future<void> downloadAndInstall(BuildContext context, LatestRelease latest) async {
+  final progress = ValueNotifier<double?>(null);
+  final status = ValueNotifier<String>('正在下载…');
+  var cancelled = false;
+  http.Client? client;
+
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (ctx) => AlertDialog(
+      title: Text('更新到 ${latest.title}'),
+      content: Column(mainAxisSize: MainAxisSize.min, children: [
+        ValueListenableBuilder<double?>(
+          valueListenable: progress,
+          builder: (_, v, __) => LinearProgressIndicator(value: v),
+        ),
+        const SizedBox(height: 12),
+        ValueListenableBuilder<String>(valueListenable: status, builder: (_, s, __) => Text(s)),
+      ]),
+      actions: [
+        TextButton(
+          onPressed: () {
+            cancelled = true;
+            client?.close();
+            Navigator.pop(ctx);
+          },
+          child: const Text('取消'),
+        ),
+      ],
+    ),
+  );
+
+  String? error;
+  try {
+    final url = await SyncService.instance.serverUrl;
+    final dir = await getTemporaryDirectory();
+    final file = File('${dir.path}/store-pos-${latest.build}.apk');
+    client = http.Client();
+    final resp = await client.send(http.Request('GET', Uri.parse('$url/app/download')));
+    if (resp.statusCode != 200) throw 'HTTP ${resp.statusCode}';
+    final total = resp.contentLength ?? 0;
+    final sink = file.openWrite();
+    var got = 0;
+    try {
+      await for (final chunk in resp.stream) {
+        sink.add(chunk);
+        got += chunk.length;
+        if (total > 0) {
+          progress.value = got / total;
+          status.value = '${(got / 1048576).toStringAsFixed(1)} / ${(total / 1048576).toStringAsFixed(1)} MB';
+        }
+      }
+    } finally {
+      await sink.close();
+    }
+    if (total > 0 && got != total) throw '下载不完整';
+    status.value = '下载完成，正在打开安装…';
+    final r = await OpenFilex.open(file.path, type: 'application/vnd.android.package-archive');
+    if (r.type != ResultType.done) throw r.message;
+  } catch (e) {
+    if (!cancelled) error = '$e';
+  } finally {
+    client?.close();
+  }
+  if (cancelled || !context.mounted) return;
+  Navigator.of(context, rootNavigator: true).pop();
+  if (error != null) {
+    final useBrowser = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('App 内更新失败'),
+        content: Text('$error\n\n可以改用浏览器下载安装。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('用浏览器下载')),
+        ],
+      ),
+    );
+    if (useBrowser == true) await openDownload();
+  }
+}
+
 Future<void> openDownload() async {
   final url = await SyncService.instance.serverUrl;
   await launchUrl(Uri.parse('$url/app/download'), mode: LaunchMode.externalApplication);
@@ -70,9 +157,9 @@ Future<void> checkForUpdate(BuildContext context, {bool silent = false}) async {
         FilledButton(
           onPressed: () {
             Navigator.pop(ctx);
-            openDownload();
+            downloadAndInstall(context, latest);
           },
-          child: const Text('下载更新'),
+          child: const Text('立即更新'),
         ),
       ],
     ),
