@@ -87,6 +87,34 @@ class SyncService {
     return null;
   }
 
+  /// 条码查商品信息（Worker 缓存 + 公共条码库）。查不到或没网返回 null。
+  Future<Map<String, dynamic>?> lookupBarcode(String code) async {
+    final url = await serverUrl;
+    if (url.isEmpty) return null;
+    try {
+      final r = await http.get(Uri.parse('$url/lookup/${Uri.encodeComponent(code)}'),
+          headers: {'authorization': 'Bearer ${await token}'}).timeout(const Duration(seconds: 12));
+      if (r.statusCode != 200) return null;
+      final d = jsonDecode(utf8.decode(r.bodyBytes)) as Map<String, dynamic>;
+      return d['found'] == true ? d : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 下载公共条码库里的商品图片（经 Worker 代理）。
+  Future<List<int>?> fetchLookupImage(String imageUrl) async {
+    final url = await serverUrl;
+    try {
+      final r = await http
+          .get(Uri.parse('$url/proxy-image?url=${Uri.encodeComponent(imageUrl)}'))
+          .timeout(const Duration(seconds: 15));
+      return r.statusCode == 200 && r.bodyBytes.isNotEmpty ? r.bodyBytes : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// 手动同步：如果后台同步正在进行，等它结束后再同步一次，保证用的是最新设置。
   Future<String?> syncNow() async {
     while (_running) {
