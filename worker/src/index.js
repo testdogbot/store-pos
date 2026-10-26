@@ -32,6 +32,11 @@ async function migrate(db) {
   } catch (_) {
     // 列已存在
   }
+  try {
+    await db.prepare(`ALTER TABLE products ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0`).run();
+  } catch (_) {
+    // 列已存在
+  }
   migrated = true;
 }
 
@@ -227,11 +232,11 @@ async function sync(body, db) {
     if (!p.barcode || !p.name) continue;
     stmts.push(
       db.prepare(
-        `INSERT INTO products (barcode, name, price_cents, stock, updated_at)
-         VALUES (?1, ?2, ?3, 0, ?4)
+        `INSERT INTO products (barcode, name, price_cents, stock, updated_at, deleted)
+         VALUES (?1, ?2, ?3, 0, ?4, ?5)
          ON CONFLICT(barcode) DO UPDATE SET
-           name = excluded.name, price_cents = excluded.price_cents, updated_at = ?4`
-      ).bind(p.barcode, p.name, p.price_cents | 0, now)
+           name = excluded.name, price_cents = excluded.price_cents, deleted = excluded.deleted, updated_at = ?4`
+      ).bind(p.barcode, p.name, p.price_cents | 0, now, p.deleted ? 1 : 0)
     );
   }
 
@@ -278,7 +283,7 @@ async function sync(body, db) {
   if (stmts.length) await db.batch(stmts);
 
   const { results } = await db
-    .prepare(`SELECT barcode, name, price_cents, stock, updated_at, image_ver FROM products WHERE updated_at > ?1`)
+    .prepare(`SELECT barcode, name, price_cents, stock, updated_at, image_ver, deleted FROM products WHERE updated_at > ?1`)
     .bind(since | 0)
     .all();
 
