@@ -14,7 +14,7 @@ class SyncService {
 
   Future<SharedPreferences> get _prefs => SharedPreferences.getInstance();
 
-  Future<String> get serverUrl async => (await _prefs).getString('server_url') ?? '';
+  Future<String> get serverUrl async => (await _prefs).getString('server_url') ?? 'https://pos.xiaolele.eu.cc';
   Future<String> get token async => (await _prefs).getString('api_token') ?? '';
 
   Future<void> saveSettings(String url, String apiToken) async {
