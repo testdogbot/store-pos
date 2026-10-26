@@ -7,6 +7,7 @@ import 'pages/products_page.dart';
 import 'pages/settings_page.dart';
 import 'pages/stock_in_page.dart';
 import 'sync.dart';
+import 'update_check.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -40,6 +41,11 @@ class _HomeShellState extends State<HomeShell> {
   void initState() {
     super.initState();
     SyncService.instance.sync();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future.delayed(const Duration(seconds: 3), () {
+        if (mounted) checkForUpdate(context, silent: true);
+      });
+    });
     // 每分钟后台同步一次，拿到其他收银机的库存变化
     _timer = Timer.periodic(const Duration(minutes: 1), (_) => SyncService.instance.sync());
   }
