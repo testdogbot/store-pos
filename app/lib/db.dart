@@ -1,6 +1,8 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
 
@@ -19,7 +21,9 @@ class AppDb {
 
   Future<Database> _open() async {
     final path = p.join(await getDatabasesPath(), 'store_pos.db');
-    return openDatabase(path, version: 1, onCreate: (db, _) async {
+    return openDatabase(path, version: 2, onUpgrade: (db, oldV, newV) async {
+      if (oldV < 2) await _addImageColumns(db);
+    }, onCreate: (db, _) async {
       await db.execute('''
         CREATE TABLE products(
           barcode TEXT PRIMARY KEY,
@@ -45,7 +49,46 @@ class AppDb {
           created_at INTEGER NOT NULL,
           synced INTEGER NOT NULL DEFAULT 0
         )''');
+      await _addImageColumns(db);
     });
+  }
+
+  /// v2：商品图片。image_ver = 服务器上的图片版本，image_local_ver = 本机已下载的版本。
+  static Future<void> _addImageColumns(Database db) async {
+    await db.execute('ALTER TABLE products ADD COLUMN image_path TEXT');
+    await db.execute('ALTER TABLE products ADD COLUMN image_dirty INTEGER NOT NULL DEFAULT 0');
+    await db.execute('ALTER TABLE products ADD COLUMN image_ver INTEGER NOT NULL DEFAULT 0');
+    await db.execute('ALTER TABLE products ADD COLUMN image_local_ver INTEGER NOT NULL DEFAULT 0');
+  }
+
+  Future<Directory> imageDir() async {
+    final dir = Directory(p.join((await getApplicationDocumentsDirectory()).path, 'product_images'));
+    if (!await dir.exists()) await dir.create(recursive: true);
+    return dir;
+  }
+
+  /// 把图片字节存成本地文件并替换旧图。fromServer=true 表示是从服务器下载的，不需要再上传。
+  Future<String> saveImageBytes(String barcode, List<int> bytes, {bool fromServer = false, int ver = 0}) async {
+    final d = await db;
+    final old = await d.query('products', columns: ['image_path'], where: 'barcode = ?', whereArgs: [barcode]);
+    final safe = barcode.replaceAll(RegExp(r'[^0-9A-Za-z_-]'), '_');
+    final file = File(p.join((await imageDir()).path, '${safe}_${DateTime.now().millisecondsSinceEpoch}.jpg'));
+    await file.writeAsBytes(bytes, flush: true);
+    await d.update(
+      'products',
+      fromServer
+          ? {'image_path': file.path, 'image_local_ver': ver}
+          : {'image_path': file.path, 'image_dirty': 1},
+      where: 'barcode = ?',
+      whereArgs: [barcode],
+    );
+    final oldPath = old.isEmpty ? null : old.first['image_path'] as String?;
+    if (oldPath != null && oldPath != file.path) {
+      try {
+        await File(oldPath).delete();
+      } catch (_) {}
+    }
+    return file.path;
   }
 
   Future<Product?> findProduct(String barcode) async {
@@ -65,11 +108,11 @@ class AppDb {
 
   /// 新建或修改商品资料（名称、价格）。
   Future<void> saveProduct(Product prod) async {
-    await (await db).insert(
-      'products',
-      {'barcode': prod.barcode, 'name': prod.name, 'price_cents': prod.priceCents, 'stock': prod.stock, 'dirty': 1},
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    // 不用 REPLACE，避免把图片字段清掉
+    await (await db).rawInsert('''
+      INSERT INTO products(barcode, name, price_cents, stock, dirty) VALUES(?,?,?,?,1)
+      ON CONFLICT(barcode) DO UPDATE SET name = excluded.name, price_cents = excluded.price_cents, dirty = 1''',
+        [prod.barcode, prod.name, prod.priceCents, prod.stock]);
   }
 
   /// 记一笔库存流水并更新本地库存。type: sale / stock_in / adjust
