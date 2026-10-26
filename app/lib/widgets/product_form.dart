@@ -78,6 +78,7 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
   Uint8List? _newImage;
   bool _looking = false;
   String? _lookupNote;
+  int? _suggest; // 条码库参考价（分）
   bool _saving = false;
 
   @override
@@ -101,11 +102,12 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     final price = (d['price_cents'] as num?)?.toInt();
     setState(() {
       _looking = false;
+      _suggest = price != null && price > 0 ? price : null;
       if (_name.text.trim().isEmpty && name.isNotEmpty) _name.text = name;
       if (_price.text.trim().isEmpty && price != null && price > 0) {
         _price.text = (price / 100).toStringAsFixed(2);
       }
-      _lookupNote = price != null && price > 0 ? '已自动识别，售价为参考价，请核对' : '已自动识别，请填写售价';
+      _lookupNote = price != null && price > 0 ? '已自动识别商品，已填入建议售价' : '已自动识别商品，条码库暂无建议价，请填写售价';
     });
     if (price == null || price <= 0) _priceFocus.requestFocus();
     final img = d['image_url'] as String?;
@@ -204,6 +206,18 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
               decoration: const InputDecoration(labelText: '售价（元）', prefixText: '¥ '),
               validator: (v) => parseYuan(v ?? '') == null ? '请填写正确价格' : null,
             ),
+            if (_suggest != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: ActionChip(
+                    avatar: Icon(Icons.sell_outlined, size: 16, color: cs.primary),
+                    label: Text('建议售价 ${yuan(_suggest!)}'),
+                    onPressed: () => setState(() => _price.text = (_suggest! / 100).toStringAsFixed(2)),
+                  ),
+                ),
+              ),
             const SizedBox(height: 10),
             TextFormField(
               controller: _qty,
