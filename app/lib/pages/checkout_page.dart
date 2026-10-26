@@ -7,6 +7,7 @@ import '../theme.dart';
 import '../widgets/product_form.dart';
 import '../widgets/product_thumb.dart';
 import '../widgets/scan_input.dart';
+import 'admin_page.dart';
 
 class CheckoutPage extends StatefulWidget {
   const CheckoutPage({super.key});
@@ -80,8 +81,27 @@ class _CheckoutPageState extends State<CheckoutPage> {
     final cs = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('收银'),
+        // 隐藏入口：长按标题进入老板后台
+        title: GestureDetector(
+          onLongPress: () => openAdmin(context),
+          child: const Text('收银'),
+        ),
         actions: [
+          ValueListenableBuilder<SyncStatus>(
+            valueListenable: SyncService.instance.status,
+            builder: (_, st, __) => Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: Icon(
+                st.syncing
+                    ? Icons.cloud_sync_outlined
+                    : st.error != null
+                        ? Icons.cloud_off_outlined
+                        : Icons.cloud_done_outlined,
+                size: 20,
+                color: st.error != null ? cs.error : cs.onSurfaceVariant,
+              ),
+            ),
+          ),
           if (_cart.isNotEmpty)
             TextButton.icon(onPressed: _confirmClear, icon: const Icon(Icons.delete_sweep_outlined), label: const Text('清空')),
           const SizedBox(width: 8),
