@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../db.dart';
 import '../models.dart';
 import '../sync.dart';
+import '../update_check.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -14,6 +15,7 @@ class _SettingsPageState extends State<SettingsPage> {
   final _url = TextEditingController();
   final _token = TextEditingController();
   Map<String, int>? _today;
+  String _version = '';
 
   @override
   void initState() {
@@ -22,7 +24,13 @@ class _SettingsPageState extends State<SettingsPage> {
       _url.text = await SyncService.instance.serverUrl;
       _token.text = await SyncService.instance.token;
       final t = await AppDb.instance.todaySummary();
-      if (mounted) setState(() => _today = t);
+      final v = await currentVersion();
+      if (mounted) {
+        setState(() {
+          _today = t;
+          _version = 'v${v.name}（构建 ${v.build}）';
+        });
+      }
     }();
   }
 
@@ -61,6 +69,13 @@ class _SettingsPageState extends State<SettingsPage> {
         FilledButton(onPressed: _saveAndSync, child: const Text('保存并同步')),
         const SizedBox(height: 8),
         const Text('不填服务器也能单机离线使用；多台手机共享库存时，所有手机填同一个地址和口令。'),
+        const Divider(height: 32),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.system_update),
+          title: Text('版本 $_version'),
+          trailing: OutlinedButton(onPressed: () => checkForUpdate(context), child: const Text('检查更新')),
+        ),
       ]),
     );
   }
