@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../db.dart';
 import '../models.dart';
+import '../sync.dart';
 import 'product_thumb.dart';
 
 /// 拍照或从相册选图，自动压缩到 800px、JPEG 75%（一般几十 KB）。
@@ -31,89 +32,172 @@ Future<Uint8List?> pickProductImage(BuildContext context) async {
   return x?.readAsBytes();
 }
 
-/// 新建/编辑商品。新建时可顺便填初始库存（记为一笔入库流水）。可附带商品图片。
+/// 新建/编辑商品。新建时自动按条码查商品名称、参考价、图片并预填；可附带商品图片。
 Future<Product?> showProductForm(BuildContext context, {required String barcode, Product? existing}) {
-  final name = TextEditingController(text: existing?.name ?? '');
-  final price = TextEditingController(text: existing == null ? '' : (existing.priceCents / 100).toStringAsFixed(2));
-  final qty = TextEditingController(text: existing == null ? '0' : '${existing.stock}');
-  final formKey = GlobalKey<FormState>();
-  Uint8List? newImage;
-
   return showDialog<Product>(
     context: context,
-    builder: (ctx) => StatefulBuilder(
-      builder: (ctx, setState) => AlertDialog(
-        title: Text(existing == null ? '新商品' : '编辑商品'),
-        content: SingleChildScrollView(
-          child: Form(
-            key: formKey,
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              GestureDetector(
-                onTap: () async {
-                  final img = await pickProductImage(ctx);
-                  if (img != null) setState(() => newImage = img);
-                },
-                child: Stack(alignment: Alignment.bottomRight, children: [
-                  newImage != null
-                      ? ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
-                          child: Image.memory(newImage!, width: 120, height: 120, fit: BoxFit.cover),
-                        )
-                      : ProductThumb(existing?.imagePath, size: 120),
-                  const CircleAvatar(radius: 16, child: Icon(Icons.photo_camera, size: 18)),
+    builder: (_) => _ProductFormDialog(barcode: barcode, existing: existing),
+  );
+}
+
+class _ProductFormDialog extends StatefulWidget {
+  final String barcode;
+  final Product? existing;
+  const _ProductFormDialog({required this.barcode, this.existing});
+  @override
+  State<_ProductFormDialog> createState() => _ProductFormDialogState();
+}
+
+class _ProductFormDialogState extends State<_ProductFormDialog> {
+  late final _name = TextEditingController(text: widget.existing?.name ?? '');
+  late final _price = TextEditingController(
+      text: widget.existing == null ? '' : (widget.existing!.priceCents / 100).toStringAsFixed(2));
+  late final _qty = TextEditingController(text: widget.existing == null ? '0' : '${widget.existing!.stock}');
+  final _formKey = GlobalKey<FormState>();
+  final _priceFocus = FocusNode();
+  Uint8List? _newImage;
+  bool _looking = false;
+  String? _lookupNote;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.existing == null) _lookup();
+  }
+
+  Future<void> _lookup() async {
+    setState(() => _looking = true);
+    final d = await SyncService.instance.lookupBarcode(widget.barcode);
+    if (!mounted) return;
+    if (d == null) {
+      setState(() {
+        _looking = false;
+        _lookupNote = '条码库没查到，请手动填写';
+      });
+      return;
+    }
+    final name = '${d['display_name'] ?? d['name'] ?? ''}'.trim();
+    final price = (d['price_cents'] as num?)?.toInt();
+    setState(() {
+      _looking = false;
+      if (_name.text.trim().isEmpty && name.isNotEmpty) _name.text = name;
+      if (_price.text.trim().isEmpty && price != null && price > 0) {
+        _price.text = (price / 100).toStringAsFixed(2);
+      }
+      _lookupNote = price != null && price > 0 ? '已自动识别，售价为参考价，请核对' : '已自动识别，请填写售价';
+    });
+    if (price == null || price <= 0) _priceFocus.requestFocus();
+    final img = d['image_url'] as String?;
+    if (img != null && _newImage == null) {
+      final bytes = await SyncService.instance.fetchLookupImage(img);
+      if (bytes != null && mounted && _newImage == null) setState(() => _newImage = Uint8List.fromList(bytes));
+    }
+  }
+
+  Future<void> _save() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _saving = true);
+    final barcode = widget.barcode;
+    final existing = widget.existing;
+    final prod = Product(
+      barcode: barcode,
+      name: _name.text.trim(),
+      priceCents: parseYuan(_price.text)!,
+      stock: existing?.stock ?? 0,
+    );
+    await AppDb.instance.saveProduct(prod);
+    if (_newImage != null) await AppDb.instance.saveImageBytes(barcode, _newImage!);
+    final q = int.parse(_qty.text);
+    if (existing == null) {
+      if (q != 0) await AppDb.instance.stockIn(barcode, q);
+    } else {
+      await AppDb.instance.setStock(barcode, q);
+    }
+    final saved = await AppDb.instance.findProduct(barcode);
+    if (mounted) Navigator.pop(context, saved);
+  }
+
+  @override
+  void dispose() {
+    _priceFocus.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final existing = widget.existing;
+    return AlertDialog(
+      title: Text(existing == null ? '新商品' : '编辑商品'),
+      content: SingleChildScrollView(
+        child: Form(
+          key: _formKey,
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            GestureDetector(
+              onTap: () async {
+                final img = await pickProductImage(context);
+                if (img != null) setState(() => _newImage = img);
+              },
+              child: Stack(alignment: Alignment.bottomRight, children: [
+                _newImage != null
+                    ? ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: Image.memory(_newImage!, width: 120, height: 120, fit: BoxFit.cover),
+                      )
+                    : ProductThumb(existing?.imagePath, size: 120),
+                const CircleAvatar(radius: 16, child: Icon(Icons.photo_camera, size: 18)),
+              ]),
+            ),
+            const SizedBox(height: 4),
+            Text(_newImage == null && existing?.imagePath == null ? '点击添加图片' : '点击更换图片',
+                style: const TextStyle(fontSize: 12, color: Colors.grey)),
+            const SizedBox(height: 8),
+            Align(alignment: Alignment.centerLeft, child: Text('条码：${widget.barcode}')),
+            if (_looking || _lookupNote != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Row(children: [
+                  if (_looking)
+                    const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                  else
+                    Icon(Icons.auto_awesome, size: 16, color: cs.primary),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(_looking ? '正在识别商品…' : _lookupNote!,
+                        style: TextStyle(fontSize: 12, color: cs.primary)),
+                  ),
                 ]),
               ),
-              const SizedBox(height: 4),
-              Text(newImage == null && existing?.imagePath == null ? '点击添加图片' : '点击更换图片',
-                  style: const TextStyle(fontSize: 12, color: Colors.grey)),
-              Align(alignment: Alignment.centerLeft, child: Text('条码：$barcode')),
-              TextFormField(
-                controller: name,
-                autofocus: existing == null,
-                decoration: const InputDecoration(labelText: '商品名称'),
-                validator: (v) => (v == null || v.trim().isEmpty) ? '请填写名称' : null,
-              ),
-              TextFormField(
-                controller: price,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(labelText: '售价（元）'),
-                validator: (v) => parseYuan(v ?? '') == null ? '请填写正确价格' : null,
-              ),
-              TextFormField(
-                controller: qty,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(labelText: existing == null ? '初始库存' : '实际库存（盘点）'),
-                validator: (v) => int.tryParse(v ?? '') == null ? '请填写整数' : null,
-              ),
-            ]),
-          ),
+            const SizedBox(height: 8),
+            TextFormField(
+              controller: _name,
+              autofocus: false,
+              decoration: const InputDecoration(labelText: '商品名称'),
+              validator: (v) => (v == null || v.trim().isEmpty) ? '请填写名称' : null,
+            ),
+            const SizedBox(height: 10),
+            TextFormField(
+              controller: _price,
+              focusNode: _priceFocus,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(labelText: '售价（元）', prefixText: '¥ '),
+              validator: (v) => parseYuan(v ?? '') == null ? '请填写正确价格' : null,
+            ),
+            const SizedBox(height: 10),
+            TextFormField(
+              controller: _qty,
+              keyboardType: TextInputType.number,
+              decoration: InputDecoration(labelText: existing == null ? '初始库存' : '实际库存（盘点）'),
+              validator: (v) => int.tryParse(v ?? '') == null ? '请填写整数' : null,
+            ),
+          ]),
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
-          FilledButton(
-            onPressed: () async {
-              if (!formKey.currentState!.validate()) return;
-              final prod = Product(
-                barcode: barcode,
-                name: name.text.trim(),
-                priceCents: parseYuan(price.text)!,
-                stock: existing?.stock ?? 0,
-              );
-              await AppDb.instance.saveProduct(prod);
-              if (newImage != null) await AppDb.instance.saveImageBytes(barcode, newImage!);
-              final q = int.parse(qty.text);
-              if (existing == null) {
-                if (q != 0) await AppDb.instance.stockIn(barcode, q);
-              } else {
-                await AppDb.instance.setStock(barcode, q);
-              }
-              final saved = await AppDb.instance.findProduct(barcode);
-              if (ctx.mounted) Navigator.pop(ctx, saved);
-            },
-            child: const Text('保存'),
-          ),
-        ],
       ),
-    ),
-  );
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
+        FilledButton(onPressed: _saving ? null : _save, child: const Text('保存')),
+      ],
+    );
+  }
 }
