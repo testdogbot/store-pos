@@ -107,17 +107,21 @@ class _CheckoutPageState extends State<CheckoutPage> {
           const SizedBox(width: 8),
         ],
       ),
-      body: Column(children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-          child: ScanInput(onScanned: _onScan, onContinuousScan: _onScan),
-        ),
+      body: HardwareScanListener(
+        onCode: _onScan,
+        child: Column(children: [
+        if (_cart.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+            child: ScanBar(onScanned: _onScan, onContinuousScan: _onScan),
+          ),
         Expanded(
           child: _cart.isEmpty
-              ? const EmptyState(
-                  icon: Icons.qr_code_scanner,
-                  title: '扫描商品条码开始收银',
-                  subtitle: '扫码枪直接扫，或点输入框右侧相机连续扫码',
+              ? ScanHub(
+                  onScanned: _onScan,
+                  onContinuousScan: _onScan,
+                  title: '扫描商品开始收银',
+                  subtitle: '可连续扫多件，扫码枪插上直接扫',
                 )
               : ListView.separated(
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
@@ -193,7 +197,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
             ),
           ),
         ),
-      ]),
+      ])),
     );
   }
 }

@@ -99,17 +99,21 @@ class _StockInPageState extends State<StockInPage> {
             ),
         ],
       ),
-      body: Column(children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-          child: ScanInput(onScanned: _onScan, onContinuousScan: _onContinuous, hint: '扫描要入库的商品'),
-        ),
+      body: HardwareScanListener(
+        onCode: _onScan,
+        child: Column(children: [
+        if (_log.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+            child: ScanBar(onScanned: _onScan, onContinuousScan: _onContinuous),
+          ),
         Expanded(
           child: _log.isEmpty
-              ? const EmptyState(
-                  icon: Icons.inventory_2_outlined,
+              ? ScanHub(
+                  onScanned: _onScan,
+                  onContinuousScan: _onContinuous,
                   title: '扫码入库',
-                  subtitle: '扫码枪扫一次可输入数量；相机连续扫码每扫一次 +1',
+                  subtitle: '相机连续扫每次 +1；扫码枪扫一次可输入数量',
                 )
               : ListView.separated(
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
@@ -131,7 +135,7 @@ class _StockInPageState extends State<StockInPage> {
                   },
                 ),
         ),
-      ]),
+      ])),
     );
   }
 }
