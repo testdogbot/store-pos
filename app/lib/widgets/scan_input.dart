@@ -30,16 +30,21 @@ class _ScanInputState extends State<ScanInput> {
   }
 
   Future<void> _openCamera() async {
-    final handler = widget.onContinuousScan ??
-        (code) async {
-          widget.onScanned(code);
-          return '已扫描 $code';
-        };
+    final handler = widget.onContinuousScan;
+    if (handler == null) {
+      // 没有连续扫码处理函数：扫到一个就返回
+      final code = await Navigator.push<String>(
+        context,
+        MaterialPageRoute(builder: (_) => CameraScanPage(onCode: (c) async => c, single: true)),
+      );
+      if (code != null) _submit(code);
+      return;
+    }
     await Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => CameraScanPage(onCode: handler)),
     );
-    _focus.requestFocus();
+    if (mounted) _focus.requestFocus();
   }
 
   @override
@@ -65,7 +70,6 @@ class _ScanInputState extends State<ScanInput> {
           icon: const Icon(Icons.camera_alt),
           onPressed: _openCamera,
         ),
-        border: const OutlineInputBorder(),
       ),
     );
   }
@@ -75,7 +79,8 @@ class _ScanInputState extends State<ScanInput> {
 /// 同一个条码要先移出画面再对准才会再算一次，避免一直对着重复计数。
 class CameraScanPage extends StatefulWidget {
   final ScanHandler onCode;
-  const CameraScanPage({super.key, required this.onCode});
+  final bool single; // true：扫到一个条码就关闭并返回它
+  const CameraScanPage({super.key, required this.onCode, this.single = false});
   @override
   State<CameraScanPage> createState() => _CameraScanPageState();
 }
@@ -121,6 +126,10 @@ class _CameraScanPageState extends State<CameraScanPage> {
     _lastAccepted = now;
     HapticFeedback.mediumImpact();
     SystemSound.play(SystemSoundType.click);
+    if (widget.single) {
+      Navigator.pop(context, code);
+      return;
+    }
 
     try {
       // 处理期间暂停相机（比如新商品要弹出建档表单）
@@ -154,7 +163,7 @@ class _CameraScanPageState extends State<CameraScanPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('连续扫码（已扫 $_count）'),
+        title: Text(widget.single ? '扫描条码' : '连续扫码（已扫 $_count）'),
         actions: [
           IconButton(icon: const Icon(Icons.flashlight_on), onPressed: () => _controller.toggleTorch()),
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('完成')),

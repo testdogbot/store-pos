@@ -7,6 +7,7 @@ import 'pages/products_page.dart';
 import 'pages/settings_page.dart';
 import 'pages/stock_in_page.dart';
 import 'sync.dart';
+import 'theme.dart';
 import 'update_check.dart';
 
 void main() {
@@ -21,7 +22,9 @@ class StorePosApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: '小店收银',
-      theme: ThemeData(colorSchemeSeed: Colors.teal, useMaterial3: true),
+      debugShowCheckedModeBanner: false,
+      theme: buildTheme(Brightness.light),
+      darkTheme: buildTheme(Brightness.dark),
       home: const HomeShell(),
     );
   }
@@ -65,10 +68,13 @@ class _HomeShellState extends State<HomeShell> {
         selectedIndex: _index,
         onDestinationSelected: (i) => setState(() => _index = i),
         destinations: const [
-          NavigationDestination(icon: Icon(Icons.point_of_sale), label: '收银'),
-          NavigationDestination(icon: Icon(Icons.inventory), label: '入库'),
-          NavigationDestination(icon: Icon(Icons.list_alt), label: '商品'),
-          NavigationDestination(icon: Icon(Icons.settings), label: '设置'),
+          NavigationDestination(
+              icon: Icon(Icons.point_of_sale_outlined), selectedIcon: Icon(Icons.point_of_sale), label: '收银'),
+          NavigationDestination(
+              icon: Icon(Icons.inventory_2_outlined), selectedIcon: Icon(Icons.inventory_2), label: '入库'),
+          NavigationDestination(
+              icon: Icon(Icons.category_outlined), selectedIcon: Icon(Icons.category), label: '商品'),
+          NavigationDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: '设置'),
         ],
       ),
     );
