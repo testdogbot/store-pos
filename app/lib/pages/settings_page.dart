@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 
-import '../db.dart';
-import '../models.dart';
 import '../sync.dart';
 import '../update_check.dart';
+import 'admin_page.dart';
 
 class SettingsPage extends StatefulWidget {
-  const SettingsPage({super.key});
+  /// embedded=true：嵌在老板后台里；firstRun=true：首次使用还没配置口令。
+  final bool embedded;
+  final bool firstRun;
+  const SettingsPage({super.key, this.embedded = false, this.firstRun = false});
   @override
   State<SettingsPage> createState() => _SettingsPageState();
 }
@@ -14,7 +16,6 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   final _url = TextEditingController();
   final _token = TextEditingController();
-  Map<String, int>? _today;
   String _version = '';
   bool _showToken = false;
   bool _saving = false;
@@ -28,19 +29,6 @@ class _SettingsPageState extends State<SettingsPage> {
       final v = await currentVersion();
       if (mounted) setState(() => _version = 'v${v.name}（构建 ${v.build}）');
     }();
-    _loadToday();
-    SyncService.instance.changes.addListener(_loadToday);
-  }
-
-  @override
-  void dispose() {
-    SyncService.instance.changes.removeListener(_loadToday);
-    super.dispose();
-  }
-
-  Future<void> _loadToday() async {
-    final t = await AppDb.instance.todaySummary();
-    if (mounted) setState(() => _today = t);
   }
 
   Future<void> _saveAndSync() async {
@@ -50,6 +38,7 @@ class _SettingsPageState extends State<SettingsPage> {
     if (!mounted) return;
     setState(() => _saving = false);
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err ?? '已保存并同步成功')));
+    if (err == null && widget.firstRun) Navigator.pop(context);
   }
 
   String _ago(DateTime t) {
@@ -75,34 +64,16 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return Scaffold(
-      appBar: AppBar(title: const Text('设置')),
-      body: ListView(padding: const EdgeInsets.fromLTRB(16, 4, 16, 32), children: [
-        // 今日营业
-        Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(20),
-            gradient: LinearGradient(colors: [cs.primary, cs.tertiary]),
-          ),
-          child: Row(children: [
-            Expanded(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('今日营业额', style: TextStyle(color: cs.onPrimary.withValues(alpha: 0.85))),
-                const SizedBox(height: 6),
-                Text(_today == null ? '—' : yuan(_today!['total']!),
-                    style: TextStyle(color: cs.onPrimary, fontSize: 32, fontWeight: FontWeight.w800)),
-              ]),
+    final body = ListView(padding: const EdgeInsets.fromLTRB(16, 4, 16, 32), children: [
+        if (widget.firstRun)
+          Card(
+            color: cs.primaryContainer,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text('第一次使用，请填写服务器地址和店铺口令。以后设置页会隐藏，只有老板长按「收银」标题、输入主账号密码才能进入。',
+                  style: TextStyle(color: cs.onPrimaryContainer)),
             ),
-            Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-              Text('笔数', style: TextStyle(color: cs.onPrimary.withValues(alpha: 0.85))),
-              const SizedBox(height: 6),
-              Text('${_today?['count'] ?? 0}',
-                  style: TextStyle(color: cs.onPrimary, fontSize: 28, fontWeight: FontWeight.w700)),
-            ]),
-          ]),
-        ),
-
+          ),
         _section('云同步', [
           ValueListenableBuilder<SyncStatus>(
             valueListenable: SyncService.instance.status,
@@ -162,6 +133,18 @@ class _SettingsPageState extends State<SettingsPage> {
               style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12)),
         ]),
 
+        if (widget.embedded)
+          _section('主账号', [
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.admin_panel_settings_outlined, color: cs.primary),
+              title: const Text('修改主账号密码'),
+              subtitle: const Text('进入老板后台时使用'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => changeAdminPassword(context),
+            ),
+          ]),
+
         _section('关于', [
           Row(children: [
             Icon(Icons.storefront_outlined, color: cs.primary),
@@ -179,7 +162,8 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ]),
         ]),
-      ]),
-    );
+      ]);
+    if (widget.embedded) return body;
+    return Scaffold(appBar: AppBar(title: Text(widget.firstRun ? '首次设置' : '设置')), body: body);
   }
 }
