@@ -17,21 +17,26 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
   int get _total => _cart.fold(0, (s, i) => s + i.subtotal);
 
-  Future<void> _onScan(String code) async {
+  /// 返回连续扫码页显示的提示；null 表示没加进购物车。
+  Future<String?> _onScan(String code) async {
     var prod = await AppDb.instance.findProduct(code);
     if (prod == null) {
-      if (!mounted) return;
+      if (!mounted) return null;
       prod = await showProductForm(context, barcode: code);
-      if (prod == null) return;
+      if (prod == null) return null;
     }
+    late CartItem item;
     setState(() {
       final existing = _cart.where((i) => i.product.barcode == code).firstOrNull;
       if (existing != null) {
         existing.qty++;
+        item = existing;
       } else {
-        _cart.insert(0, CartItem(prod!));
+        item = CartItem(prod!);
+        _cart.insert(0, item);
       }
     });
+    return '${item.product.name} ×${item.qty}\n合计 ${yuan(_total)}';
   }
 
   Future<void> _checkout() async {
@@ -63,7 +68,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
     return Scaffold(
       appBar: AppBar(title: const Text('收银')),
       body: Column(children: [
-        Padding(padding: const EdgeInsets.all(12), child: ScanInput(onScanned: _onScan)),
+        Padding(padding: const EdgeInsets.all(12), child: ScanInput(onScanned: _onScan, onContinuousScan: _onScan)),
         Expanded(
           child: _cart.isEmpty
               ? const Center(child: Text('扫描商品条码开始收银'))
