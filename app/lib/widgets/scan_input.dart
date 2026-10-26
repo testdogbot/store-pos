@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
+import '../beep.dart';
+
 /// 处理一次扫码，返回要在相机页底部显示的提示（null 表示忽略）。
 typedef ScanHandler = Future<String?> Function(String code);
 
@@ -196,7 +198,10 @@ class _HardwareScanListenerState extends State<HardwareScanListener> {
     if (e.logicalKey == LogicalKeyboardKey.enter || e.logicalKey == LogicalKeyboardKey.numpadEnter) {
       final code = _buf.toString().trim();
       _buf.clear();
-      if (code.isNotEmpty) widget.onCode(code);
+      if (code.isNotEmpty) {
+        Beep.play();
+        widget.onCode(code);
+      }
       return code.isNotEmpty;
     }
     final ch = e.character;
@@ -260,8 +265,7 @@ class _CameraScanPageState extends State<CameraScanPage> {
     _lastCode = code;
     _lastSeen = now;
     _lastAccepted = now;
-    HapticFeedback.mediumImpact();
-    SystemSound.play(SystemSoundType.click);
+    Beep.play();
     if (widget.single) {
       Navigator.pop(context, code);
       return;
