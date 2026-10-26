@@ -31,17 +31,16 @@ jobs:
       - name: Generate Android platform files (keeps existing lib/ and pubspec.yaml)
         run: flutter create --platforms=android --org com.xiaolele --project-name store_pos .
 
-      - name: Permissions and app name
-        run: |
-          M=android/app/src/main/AndroidManifest.xml
-          sed -i 's#<manifest xmlns:android="http://schemas.android.com/apk/res/android">#<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.CAMERA"/>#' $M
-          sed -i 's#android:label="store_pos"#android:label="小店收银"#' $M
-          grep -n "permission\|label" $M
+      - name: Permissions, app name, fixed signing
+        run: python3 tool/patch_android.py
 
       - run: flutter pub get
 
-      - name: Build APK
-        run: flutter build apk --release
+      - name: Build APK (version 1.0.<run_number>)
+        run: flutter build apk --release --build-name=1.0.${{ github.run_number }} --build-number=${{ github.run_number }}
+
+      - name: Check signature
+        run: keytool -printcert -jarfile build/app/outputs/flutter-apk/app-release.apk | head -5
 
       - name: Rename
         run: cp build/app/outputs/flutter-apk/app-release.apk store-pos-${{ github.run_number }}.apk
@@ -55,5 +54,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
-          name: 小店收银 build ${{ github.run_number }}
+          name: 小店收银 v1.0.${{ github.run_number }}
+          body: ${{ github.event.head_commit.message }}
           files: app/store-pos-${{ github.run_number }}.apk
