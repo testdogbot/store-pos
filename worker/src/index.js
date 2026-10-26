@@ -21,6 +21,7 @@ const SCHEMA = [
   `CREATE INDEX IF NOT EXISTS idx_movements_barcode ON movements(barcode)`,
   `CREATE TABLE IF NOT EXISTS sales ( id TEXT PRIMARY KEY, total_cents INTEGER NOT NULL, items TEXT NOT NULL, device TEXT, created_at INTEGER NOT NULL )`,
   `CREATE TABLE IF NOT EXISTS barcode_cache ( barcode TEXT PRIMARY KEY, data TEXT NOT NULL, found INTEGER NOT NULL, updated_at INTEGER NOT NULL )`,
+  `CREATE TABLE IF NOT EXISTS config ( key TEXT PRIMARY KEY, value TEXT NOT NULL )`,
   `CREATE TABLE IF NOT EXISTS images ( barcode TEXT PRIMARY KEY, data BLOB NOT NULL, mime TEXT NOT NULL, updated_at INTEGER NOT NULL )`,
 ];
 let migrated = false;
@@ -32,10 +33,18 @@ async function migrate(db) {
   } catch (_) {
     // 列已存在
   }
-  try {
-    await db.prepare(`ALTER TABLE products ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0`).run();
-  } catch (_) {
-    // 列已存在
+  for (const sql of [
+    `ALTER TABLE products ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE sales ADD COLUMN original_total_cents INTEGER`,
+    `ALTER TABLE sales ADD COLUMN note TEXT`,
+    `ALTER TABLE sales ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE sales ADD COLUMN edited_at INTEGER`,
+  ]) {
+    try {
+      await db.prepare(sql).run();
+    } catch (_) {
+      // 列已存在
+    }
   }
   migrated = true;
 }
@@ -120,8 +129,25 @@ async function lookup(barcode, env) {
     .bind(barcode)
     .first();
   // 查到的永久缓存；没查到的 7 天后再查
-  if (cached && (cached.found || Date.now() - cached.updated_at < 7 * 86400000)) {
-    return { ...JSON.parse(cached.data), cached: true };
+  if (cached) {
+    const d = JSON.parse(cached.data);
+    // 有价格的结果永久缓存；没价格/没查到的 7 天后重查（本地条码库可能有参考价）
+    const fresh = Date.now() - cached.updated_at < 7 * 86400000;
+    if ((d.found && d.price_cents != null) || (fresh && d.source === 'localdb') || (!d.found && fresh)) {
+      return { ...d, cached: true };
+    }
+    if (d.found && d.price_cents == null && d.source !== 'localdb') {
+      try {
+        const local = await lookupLocalDb(barcode);
+        if (local && local.found && local.price_cents != null) {
+          d.price_cents = local.price_cents;
+          await env.DB.prepare(`UPDATE barcode_cache SET data = ?2, updated_at = ?3 WHERE barcode = ?1`)
+            .bind(barcode, JSON.stringify(d), Date.now())
+            .run();
+        }
+      } catch (_) {}
+      return d;
+    }
   }
   let res = null;
   try {
@@ -139,6 +165,12 @@ async function lookup(barcode, env) {
   } catch (_) {}
   if (res && res.found) {
     if (off && off.found && off.image_url) res.image_url = off.image_url;
+    if (res.price_cents == null && res.source !== 'localdb') {
+      try {
+        const local = await lookupLocalDb(barcode);
+        if (local && local.found && local.price_cents != null) res.price_cents = local.price_cents;
+      } catch (_) {}
+    }
   } else if (off && off.found && off.name) {
     res = off;
   } else if (res || off) {
@@ -157,6 +189,138 @@ async function lookup(barcode, env) {
     .bind(barcode, JSON.stringify(res), res.found ? 1 : 0, Date.now())
     .run();
   return res;
+}
+
+// ---------- 主账号（老板）：营业额管理 ----------
+async function sha256(text) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`store-pos:${text}`));
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+async function getConfig(db, key) {
+  const r = await db.prepare(`SELECT value FROM config WHERE key = ?1`).bind(key).first();
+  return r ? r.value : null;
+}
+const TZ = 8 * 3600000; // 按北京时间算“哪一天”
+
+async function admin(request, env, url) {
+  const db = env.DB;
+  const hash = await getConfig(db, 'admin_hash');
+  if (url.pathname === '/admin/status') return json({ has_admin: !!hash });
+  if (url.pathname === '/admin/setup' && request.method === 'POST') {
+    if (hash) return json({ error: '主账号已设置' }, 409);
+    const { password = '' } = await request.json();
+    if (String(password).length < 4) return json({ error: '密码至少 4 位' }, 400);
+    await db.prepare(`INSERT INTO config (key, value) VALUES ('admin_hash', ?1)`).bind(await sha256(password)).run();
+    return json({ ok: true });
+  }
+  const pw = request.headers.get('x-admin-password') || '';
+  if (!hash || (await sha256(pw)) !== hash) return json({ error: '主账号密码错误' }, 403);
+
+  if (url.pathname === '/admin/login') return json({ ok: true });
+
+  if (url.pathname === '/admin/password' && request.method === 'POST') {
+    const { password = '' } = await request.json();
+    if (String(password).length < 4) return json({ error: '密码至少 4 位' }, 400);
+    await db.prepare(`UPDATE config SET value = ?1 WHERE key = 'admin_hash'`).bind(await sha256(password)).run();
+    return json({ ok: true });
+  }
+
+  // 每日汇总：最近 days 天
+  if (url.pathname === '/admin/summary') {
+    const days = Math.min(Math.max(parseInt(url.searchParams.get('days') || '7', 10), 1), 90);
+    const todayStart = Math.floor((Date.now() + TZ) / 86400000) * 86400000 - TZ;
+    const from = todayStart - (days - 1) * 86400000;
+    const { results } = await db
+      .prepare(
+        `SELECT CAST((created_at + ${TZ}) / 86400000 AS INTEGER) AS day, COUNT(*) AS n, SUM(total_cents) AS total
+           FROM sales WHERE deleted = 0 AND created_at >= ?1 GROUP BY day`
+      )
+      .bind(from)
+      .all();
+    const map = Object.fromEntries(results.map((r) => [r.day, r]));
+    const out = [];
+    for (let i = 0; i < days; i++) {
+      const start = from + i * 86400000;
+      const day = Math.floor((start + TZ) / 86400000);
+      const r = map[day];
+      out.push({ start, count: r ? r.n : 0, total_cents: r ? r.total : 0 });
+    }
+    return json({ days: out });
+  }
+
+  // 某段时间的流水
+  if (url.pathname === '/admin/sales' && request.method === 'GET') {
+    const from = parseInt(url.searchParams.get('from') || '0', 10);
+    const to = parseInt(url.searchParams.get('to') || String(Date.now() + 86400000), 10);
+    const { results } = await db
+      .prepare(
+        `SELECT id, total_cents, original_total_cents, items, device, created_at, note, edited_at
+           FROM sales WHERE deleted = 0 AND created_at >= ?1 AND created_at < ?2 ORDER BY created_at DESC LIMIT 500`
+      )
+      .bind(from, to)
+      .all();
+    return json({ sales: results.map((r) => ({ ...r, items: JSON.parse(r.items || '[]') })) });
+  }
+
+  // 手动记一笔
+  if (url.pathname === '/admin/sales' && request.method === 'POST') {
+    const { total_cents, note = '', created_at } = await request.json();
+    if (!Number.isInteger(total_cents)) return json({ error: 'bad total' }, 400);
+    const id = crypto.randomUUID();
+    await db
+      .prepare(
+        `INSERT INTO sales (id, total_cents, items, device, created_at, note) VALUES (?1, ?2, '[]', 'admin', ?3, ?4)`
+      )
+      .bind(id, total_cents, created_at || Date.now(), note || '手动记账')
+      .run();
+    return json({ ok: true, id });
+  }
+
+  const sm = url.pathname.match(/^\/admin\/sales\/([^/]+)$/);
+  if (sm) {
+    const id = decodeURIComponent(sm[1]);
+    const sale = await db.prepare(`SELECT * FROM sales WHERE id = ?1 AND deleted = 0`).bind(id).first();
+    if (!sale) return json({ error: 'not found' }, 404);
+    const now = Date.now();
+    if (request.method === 'PUT') {
+      const { total_cents, note } = await request.json();
+      if (!Number.isInteger(total_cents)) return json({ error: 'bad total' }, 400);
+      await db
+        .prepare(
+          `UPDATE sales SET total_cents = ?2, original_total_cents = COALESCE(original_total_cents, total_cents),
+             note = ?3, edited_at = ?4 WHERE id = ?1`
+        )
+        .bind(id, total_cents, note ?? sale.note ?? null, now)
+        .run();
+      return json({ ok: true });
+    }
+    if (request.method === 'DELETE') {
+      const stmts = [db.prepare(`UPDATE sales SET deleted = 1, edited_at = ?2 WHERE id = ?1`).bind(id, now)];
+      if (url.searchParams.get('restock') === '1') {
+        const items = JSON.parse(sale.items || '[]');
+        items.forEach((it, i) => {
+          if (!it.barcode || !it.qty) return;
+          stmts.push(
+            db
+              .prepare(
+                `INSERT OR IGNORE INTO movements (id, barcode, delta, type, device, created_at) VALUES (?1, ?2, ?3, 'refund', 'admin', ?4)`
+              )
+              .bind(`refund-${id}-${i}`, it.barcode, it.qty | 0, now)
+          );
+          stmts.push(
+            db
+              .prepare(
+                `UPDATE products SET stock = (SELECT COALESCE(SUM(delta), 0) FROM movements WHERE barcode = ?1), updated_at = ?2 WHERE barcode = ?1`
+              )
+              .bind(it.barcode, now)
+          );
+        });
+      }
+      await db.batch(stmts);
+      return json({ ok: true });
+    }
+  }
+  return json({ error: 'not found' }, 404);
 }
 
 const MAX_IMAGE = 1024 * 1024; // 1 MB，App 端会先压缩到几十 KB
@@ -190,6 +354,8 @@ export default {
     }
 
     await migrate(env.DB);
+
+    if (url.pathname.startsWith('/admin/')) return admin(request, env, url);
 
     if (url.pathname === '/sync' && request.method === 'POST') {
       return sync(await request.json(), env.DB);
@@ -243,6 +409,12 @@ export default {
   },
 };
 
+// 毫秒时间戳不能用 |0（会截成 32 位）
+function toMs(v, fallback) {
+  const n = Math.trunc(Number(v));
+  return Number.isFinite(n) && n > 1e12 ? n : fallback;
+}
+
 async function sync(body, db) {
   const { device = '', since = 0, products = [], movements = [], sales = [] } = body || {};
   const now = Date.now();
@@ -277,7 +449,7 @@ async function sync(body, db) {
       db.prepare(
         `INSERT OR IGNORE INTO movements (id, barcode, delta, type, device, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)`
-      ).bind(m.id, m.barcode, m.delta | 0, m.type || 'adjust', device, m.created_at | 0)
+      ).bind(m.id, m.barcode, m.delta | 0, m.type || 'adjust', device, toMs(m.created_at, now))
     );
   }
   for (const barcode of touched) {
@@ -297,7 +469,7 @@ async function sync(body, db) {
       db.prepare(
         `INSERT OR IGNORE INTO sales (id, total_cents, items, device, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5)`
-      ).bind(s.id, s.total_cents | 0, JSON.stringify(s.items || []), device, s.created_at | 0)
+      ).bind(s.id, s.total_cents | 0, JSON.stringify(s.items || []), device, toMs(s.created_at, now))
     );
   }
 
@@ -305,7 +477,7 @@ async function sync(body, db) {
 
   const { results } = await db
     .prepare(`SELECT barcode, name, price_cents, stock, updated_at, image_ver, deleted FROM products WHERE updated_at > ?1`)
-    .bind(since | 0)
+    .bind(toMs(since, 0))
     .all();
 
   return json({ server_time: now, products: results });

@@ -48,6 +48,12 @@ class _HomeShellState extends State<HomeShell> {
       Future.delayed(const Duration(seconds: 3), () {
         if (mounted) checkForUpdate(context, silent: true);
       });
+      // 首次使用还没填口令：自动打开设置
+      SyncService.instance.token.then((t) {
+        if (t.isEmpty && mounted) {
+          Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsPage(firstRun: true)));
+        }
+      });
     });
     // 每分钟后台同步一次，拿到其他收银机的库存变化
     _timer = Timer.periodic(const Duration(minutes: 1), (_) => SyncService.instance.sync());
@@ -61,7 +67,7 @@ class _HomeShellState extends State<HomeShell> {
 
   @override
   Widget build(BuildContext context) {
-    const pages = [CheckoutPage(), StockInPage(), ProductsPage(), SettingsPage()];
+    const pages = [CheckoutPage(), StockInPage(), ProductsPage()];
     return Scaffold(
       body: IndexedStack(index: _index, children: pages),
       bottomNavigationBar: NavigationBar(
@@ -74,7 +80,6 @@ class _HomeShellState extends State<HomeShell> {
               icon: Icon(Icons.inventory_2_outlined), selectedIcon: Icon(Icons.inventory_2), label: '入库'),
           NavigationDestination(
               icon: Icon(Icons.category_outlined), selectedIcon: Icon(Icons.category), label: '商品'),
-          NavigationDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: '设置'),
         ],
       ),
     );
