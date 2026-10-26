@@ -32,6 +32,26 @@ Future<Uint8List?> pickProductImage(BuildContext context) async {
   return x?.readAsBytes();
 }
 
+/// 删除商品前二次确认。
+Future<bool> confirmDeleteProduct(BuildContext context, Product p) async {
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('删除商品？'),
+      content: Text('「${p.name}」将从所有手机上删除，已有的销售记录不受影响。以后再扫这个条码可以重新添加。'),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+        FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: Theme.of(ctx).colorScheme.error),
+          onPressed: () => Navigator.pop(ctx, true),
+          child: const Text('删除'),
+        ),
+      ],
+    ),
+  );
+  return ok == true;
+}
+
 /// 新建/编辑商品。新建时自动按条码查商品名称、参考价、图片并预填；可附带商品图片。
 Future<Product?> showProductForm(BuildContext context, {required String barcode, Product? existing}) {
   return showDialog<Product>(
@@ -195,6 +215,19 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
         ),
       ),
       actions: [
+        if (existing != null)
+          TextButton(
+            onPressed: _saving
+                ? null
+                : () async {
+                    if (await confirmDeleteProduct(context, existing)) {
+                      await AppDb.instance.deleteProduct(existing.barcode);
+                      if (mounted) Navigator.pop(context);
+                    }
+                  },
+            style: TextButton.styleFrom(foregroundColor: cs.error),
+            child: const Text('删除'),
+          ),
         TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
         FilledButton(onPressed: _saving ? null : _save, child: const Text('保存')),
       ],

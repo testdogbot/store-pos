@@ -134,12 +134,32 @@ class _ProductsPageState extends State<ProductsPage> {
                     separatorBuilder: (_, __) => const SizedBox(height: 8),
                     itemBuilder: (_, i) {
                       final p = shown[i];
-                      return Card(
+                      return Dismissible(
+                        key: ValueKey('prod-${p.barcode}'),
+                        direction: DismissDirection.endToStart,
+                        background: Container(
+                          alignment: Alignment.centerRight,
+                          padding: const EdgeInsets.only(right: 24),
+                          decoration: BoxDecoration(color: cs.error, borderRadius: BorderRadius.circular(16)),
+                          child: Icon(Icons.delete_outline, color: cs.onError),
+                        ),
+                        confirmDismiss: (_) => confirmDeleteProduct(context, p),
+                        onDismissed: (_) async {
+                          setState(() => _all.removeWhere((x) => x.barcode == p.barcode));
+                          await AppDb.instance.deleteProduct(p.barcode);
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('已删除「${p.name}」')));
+                          }
+                          SyncService.instance.notifyChanged();
+                          SyncService.instance.sync();
+                        },
+                        child: Card(
                         clipBehavior: Clip.antiAlias,
                         child: InkWell(
                           onTap: () async {
                             await showProductForm(context, barcode: p.barcode, existing: p);
                             SyncService.instance.notifyChanged();
+                            SyncService.instance.sync();
                           },
                           child: Padding(
                             padding: const EdgeInsets.all(10),
@@ -165,7 +185,7 @@ class _ProductsPageState extends State<ProductsPage> {
                             ]),
                           ),
                         ),
-                      );
+                      ));
                     },
                   ),
           ),

@@ -21,8 +21,9 @@ class AppDb {
 
   Future<Database> _open() async {
     final path = p.join(await getDatabasesPath(), 'store_pos.db');
-    return openDatabase(path, version: 2, onUpgrade: (db, oldV, newV) async {
+    return openDatabase(path, version: 3, onUpgrade: (db, oldV, newV) async {
       if (oldV < 2) await _addImageColumns(db);
+      if (oldV < 3) await _addDeletedColumn(db);
     }, onCreate: (db, _) async {
       await db.execute('''
         CREATE TABLE products(
@@ -50,6 +51,7 @@ class AppDb {
           synced INTEGER NOT NULL DEFAULT 0
         )''');
       await _addImageColumns(db);
+      await _addDeletedColumn(db);
     });
   }
 
@@ -59,6 +61,25 @@ class AppDb {
     await db.execute('ALTER TABLE products ADD COLUMN image_dirty INTEGER NOT NULL DEFAULT 0');
     await db.execute('ALTER TABLE products ADD COLUMN image_ver INTEGER NOT NULL DEFAULT 0');
     await db.execute('ALTER TABLE products ADD COLUMN image_local_ver INTEGER NOT NULL DEFAULT 0');
+  }
+
+  /// v3：删除商品用软删除标记，方便同步到其他手机。
+  static Future<void> _addDeletedColumn(Database db) async {
+    await db.execute('ALTER TABLE products ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0');
+  }
+
+  /// 删除商品：标记删除并等待同步，同时删掉本地图片。再次扫码新建同一条码会恢复。
+  Future<void> deleteProduct(String barcode) async {
+    final d = await db;
+    final rows = await d.query('products', columns: ['image_path'], where: 'barcode = ?', whereArgs: [barcode]);
+    await d.update('products', {'deleted': 1, 'dirty': 1, 'image_path': null, 'image_dirty': 0},
+        where: 'barcode = ?', whereArgs: [barcode]);
+    final path = rows.isEmpty ? null : rows.first['image_path'] as String?;
+    if (path != null) {
+      try {
+        await File(path).delete();
+      } catch (_) {}
+    }
   }
 
   Future<Directory> imageDir() async {
@@ -92,14 +113,14 @@ class AppDb {
   }
 
   Future<Product?> findProduct(String barcode) async {
-    final rows = await (await db).query('products', where: 'barcode = ?', whereArgs: [barcode]);
+    final rows = await (await db).query('products', where: 'barcode = ? AND deleted = 0', whereArgs: [barcode]);
     return rows.isEmpty ? null : Product.fromMap(rows.first);
   }
 
   Future<List<Product>> allProducts({String keyword = ''}) async {
     final rows = await (await db).query(
       'products',
-      where: keyword.isEmpty ? null : 'name LIKE ? OR barcode LIKE ?',
+      where: keyword.isEmpty ? 'deleted = 0' : 'deleted = 0 AND (name LIKE ? OR barcode LIKE ?)',
       whereArgs: keyword.isEmpty ? null : ['%$keyword%', '%$keyword%'],
       orderBy: 'name',
     );
@@ -110,8 +131,8 @@ class AppDb {
   Future<void> saveProduct(Product prod) async {
     // 不用 REPLACE，避免把图片字段清掉
     await (await db).rawInsert('''
-      INSERT INTO products(barcode, name, price_cents, stock, dirty) VALUES(?,?,?,?,1)
-      ON CONFLICT(barcode) DO UPDATE SET name = excluded.name, price_cents = excluded.price_cents, dirty = 1''',
+      INSERT INTO products(barcode, name, price_cents, stock, dirty, deleted) VALUES(?,?,?,?,1,0)
+      ON CONFLICT(barcode) DO UPDATE SET name = excluded.name, price_cents = excluded.price_cents, dirty = 1, deleted = 0''',
         [prod.barcode, prod.name, prod.priceCents, prod.stock]);
   }
 
