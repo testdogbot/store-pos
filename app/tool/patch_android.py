@@ -8,7 +8,8 @@ if 'android.permission.CAMERA' not in s:
         '<manifest xmlns:android="http://schemas.android.com/apk/res/android">',
         '<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n'
         '    <uses-permission android:name="android.permission.INTERNET"/>\n'
-        '    <uses-permission android:name="android.permission.CAMERA"/>', 1)
+        '    <uses-permission android:name="android.permission.CAMERA"/>\n'
+        '    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>', 1)
 s = s.replace('android:label="store_pos"', 'android:label="小店收银"')
 browse = ('        <intent>\n            <action android:name="android.intent.action.VIEW"/>\n'
           '            <data android:scheme="https"/>\n        </intent>\n')
