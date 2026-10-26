@@ -50,7 +50,7 @@ class _SettingsPageState extends State<SettingsPage> {
         Text('云同步（Cloudflare）', style: Theme.of(context).textTheme.titleMedium),
         TextField(
           controller: _url,
-          decoration: const InputDecoration(labelText: '服务器地址', hintText: 'https://store-pos.xxx.workers.dev'),
+          decoration: const InputDecoration(labelText: '服务器地址', hintText: 'https://pos.xiaolele.eu.cc'),
         ),
         TextField(
           controller: _token,
