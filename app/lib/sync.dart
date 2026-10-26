@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
@@ -12,6 +13,13 @@ class SyncService {
   SyncService._();
   static final SyncService instance = SyncService._();
   bool _running = false;
+
+  /// 数据有变化（同步完成、结账、入库）时 +1，页面监听它自动刷新。
+  final ValueNotifier<int> changes = ValueNotifier(0);
+  /// 同步状态：null=未同步过；lastError 为空表示正常。
+  final ValueNotifier<SyncStatus> status = ValueNotifier(const SyncStatus());
+
+  void notifyChanged() => changes.value++;
 
   Future<SharedPreferences> get _prefs => SharedPreferences.getInstance();
 
@@ -79,11 +87,29 @@ class SyncService {
     return null;
   }
 
+  /// 手动同步：如果后台同步正在进行，等它结束后再同步一次，保证用的是最新设置。
+  Future<String?> syncNow() async {
+    while (_running) {
+      await Future.delayed(const Duration(milliseconds: 200));
+    }
+    if ((await serverUrl).isEmpty) return '未填写服务器地址';
+    return sync();
+  }
+
   /// 返回 null 表示成功（或未配置服务器），否则返回错误信息。
   Future<String?> sync() async {
     final url = await serverUrl;
     if (url.isEmpty || _running) return null;
     _running = true;
+    status.value = SyncStatus(syncing: true, lastAt: status.value.lastAt, error: status.value.error);
+    final err = await _doSync(url);
+    _running = false;
+    status.value = SyncStatus(lastAt: err == null ? DateTime.now() : status.value.lastAt, error: err);
+    notifyChanged();
+    return err;
+  }
+
+  Future<String?> _doSync(String url) async {
     try {
       final db = await AppDb.instance.db;
       final prefs = await _prefs;
@@ -143,8 +169,13 @@ class SyncService {
       return await _syncImages(url, await token);
     } catch (e) {
       return '同步失败：$e';
-    } finally {
-      _running = false;
     }
   }
+}
+
+class SyncStatus {
+  final bool syncing;
+  final DateTime? lastAt;
+  final String? error;
+  const SyncStatus({this.syncing = false, this.lastAt, this.error});
 }
