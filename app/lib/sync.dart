@@ -184,13 +184,15 @@ class SyncService {
               'SELECT COALESCE(SUM(delta),0) AS d FROM movements WHERE barcode = ? AND synced = 0', [p['barcode']]);
           final localStock = (p['stock'] as num).toInt() + (pending.first['d'] as num).toInt();
           await txn.rawInsert('''
-            INSERT INTO products(barcode, name, price_cents, stock, dirty, image_ver) VALUES(?,?,?,?,0,?)
+            INSERT INTO products(barcode, name, price_cents, stock, dirty, image_ver, deleted) VALUES(?,?,?,?,0,?,?)
             ON CONFLICT(barcode) DO UPDATE SET
+              deleted = CASE WHEN products.dirty = 1 THEN products.deleted ELSE excluded.deleted END,
               name = CASE WHEN products.dirty = 1 THEN products.name ELSE excluded.name END,
               price_cents = CASE WHEN products.dirty = 1 THEN products.price_cents ELSE excluded.price_cents END,
               stock = excluded.stock,
               image_ver = MAX(products.image_ver, excluded.image_ver)''',
-              [p['barcode'], p['name'], p['price_cents'], localStock, (p['image_ver'] as num?)?.toInt() ?? 0]);
+              [p['barcode'], p['name'], p['price_cents'], localStock, (p['image_ver'] as num?)?.toInt() ?? 0,
+               (p['deleted'] as num?)?.toInt() ?? 0]);
         }
       });
       await prefs.setInt('last_sync', (data['server_time'] as num).toInt());
