@@ -100,6 +100,21 @@ async function lookupOff(barcode) {
   };
 }
 
+// 本地条码库（EricLiuCN/barcode 100 万条 + 药品 4 万条），按前 6 位分片放在 GitHub barcode-db 分支
+async function lookupLocalDb(barcode) {
+  if (!/^\d{8,14}$/.test(barcode)) return null;
+  const r = await fetch(
+    `https://raw.githubusercontent.com/testdogbot/store-pos/barcode-db/d/${barcode.slice(0, 6)}.json`,
+    { cf: { cacheTtl: 7 * 86400, cacheEverything: true } }
+  );
+  if (r.status === 404) return { found: false };
+  if (!r.ok) return null;
+  const v = (await r.json())[barcode];
+  if (!v) return { found: false };
+  const [name, spec, brand, price, manufacturer] = v;
+  return { found: true, name, spec, brand, manufacturer, price_cents: price ?? null, source: 'localdb' };
+}
+
 async function lookup(barcode, env) {
   const cached = await env.DB.prepare(`SELECT data, found, updated_at FROM barcode_cache WHERE barcode = ?1`)
     .bind(barcode)
@@ -110,8 +125,14 @@ async function lookup(barcode, env) {
   }
   let res = null;
   try {
-    res = await lookupApizero(barcode, env);
+    res = await lookupLocalDb(barcode);
   } catch (_) {}
+  if (!res || !res.found) {
+    try {
+      const api = await lookupApizero(barcode, env);
+      if (api) res = api;
+    } catch (_) {}
+  }
   let off = null;
   try {
     off = await lookupOff(barcode);
