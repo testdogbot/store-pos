@@ -1,8 +1,10 @@
 name = "store-pos"
 main = "src/index.js"
 compatibility_date = "2026-10-01"
+# 自定义域名（国内访问 workers.dev 不稳定，且部分账号 workers.dev 会报 1101）
+routes = [{ pattern = "pos.xiaolele.eu.cc", custom_domain = true }]
 
 [[d1_databases]]
 binding = "DB"
 database_name = "store-pos"
-database_id = "REPLACE_WITH_YOUR_D1_ID"
+database_id = "3fa5b00b-c27d-46b2-a7a0-b71ce66b7b9f"
