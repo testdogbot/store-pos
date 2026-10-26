@@ -3,14 +3,16 @@ class Product {
   String name;
   int priceCents; // 价格，单位：分
   int stock;
+  String? imagePath; // 本地图片文件路径
 
-  Product({required this.barcode, required this.name, required this.priceCents, this.stock = 0});
+  Product({required this.barcode, required this.name, required this.priceCents, this.stock = 0, this.imagePath});
 
   factory Product.fromMap(Map<String, Object?> m) => Product(
         barcode: m['barcode'] as String,
         name: m['name'] as String,
         priceCents: (m['price_cents'] as num).toInt(),
         stock: (m['stock'] as num).toInt(),
+        imagePath: m['image_path'] as String?,
       );
 }
 
