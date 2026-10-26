@@ -14,6 +14,36 @@ class StockInPage extends StatefulWidget {
 class _StockInPageState extends State<StockInPage> {
   final List<String> _log = [];
 
+  /// 摄像头连续扫码入库：每扫一次 +1，不弹数量框；新商品弹建档表单。
+  Future<String?> _onContinuous(String code) async {
+    final prod = await AppDb.instance.findProduct(code);
+    if (!mounted) return null;
+    String msg;
+    if (prod == null) {
+      final created = await showProductForm(context, barcode: code);
+      if (created == null) return null;
+      msg = '新建 ${created.name}，库存 ${created.stock}';
+    } else {
+      await AppDb.instance.stockIn(code, 1);
+      _session[code] = (_session[code] ?? 0) + 1;
+      msg = '${prod.name} +1 → ${prod.stock + 1}（本次共 +${_session[code]}）';
+    }
+    if (mounted) setState(() => _log.insert(0, msg));
+    _syncSoon();
+    return msg;
+  }
+
+  final Map<String, int> _session = {};
+  bool _syncQueued = false;
+  void _syncSoon() {
+    if (_syncQueued) return;
+    _syncQueued = true;
+    Future.delayed(const Duration(seconds: 3), () {
+      _syncQueued = false;
+      SyncService.instance.sync();
+    });
+  }
+
   Future<void> _onScan(String code) async {
     final prod = await AppDb.instance.findProduct(code);
     if (!mounted) return;
@@ -51,7 +81,7 @@ class _StockInPageState extends State<StockInPage> {
     return Scaffold(
       appBar: AppBar(title: const Text('扫码入库')),
       body: Column(children: [
-        Padding(padding: const EdgeInsets.all(12), child: ScanInput(onScanned: _onScan, hint: '扫描要入库的商品')),
+        Padding(padding: const EdgeInsets.all(12), child: ScanInput(onScanned: _onScan, onContinuousScan: _onContinuous, hint: '扫描要入库的商品')),
         Expanded(
           child: ListView(children: [for (final l in _log) ListTile(dense: true, title: Text(l))]),
         ),
