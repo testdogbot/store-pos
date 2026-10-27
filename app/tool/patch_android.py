@@ -1,5 +1,13 @@
-"""flutter create 生成 android/ 之后打补丁：权限、应用名、url_launcher 查询、固定签名。"""
-import pathlib, re, sys
+"""flutter create 生成 android/ 之后打补丁：权限、应用名、图标、url_launcher 查询、固定签名。"""
+import pathlib, re, shutil, sys
+
+# 启动图标：用 android-icons/ 里的 Logo 覆盖 Flutter 默认图标
+res = pathlib.Path('android/app/src/main/res')
+for d in pathlib.Path('android-icons').glob('mipmap-*'):
+    (res / d.name).mkdir(parents=True, exist_ok=True)
+    shutil.copy(d / 'ic_launcher.png', res / d.name / 'ic_launcher.png')
+shutil.rmtree(res / 'mipmap-anydpi-v26', ignore_errors=True)  # 防止自适应图标盖掉自定义图标
+print('icons patched')
 
 m = pathlib.Path('android/app/src/main/AndroidManifest.xml')
 s = m.read_text()
