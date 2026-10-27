@@ -63,9 +63,22 @@ async function latestRelease() {
 }
 
 // ---------- 条码查商品 ----------
+// ApiZero Key：优先 Worker 环境变量，其次老板在 App 后台填写的（存 D1 config 表）
+async function apizeroKey(env) {
+  if (env.APIZERO_KEY) return env.APIZERO_KEY;
+  if (env._azk !== undefined) return env._azk;
+  try {
+    const r = await env.DB.prepare(`SELECT value FROM config WHERE key = 'apizero_key'`).first();
+    env._azk = r ? r.value : '';
+  } catch (_) {
+    env._azk = '';
+  }
+  return env._azk;
+}
 async function lookupApizero(barcode, env) {
   const headers = { 'user-agent': 'store-pos-worker' };
-  if (env.APIZERO_KEY) headers.authorization = `Bearer ${env.APIZERO_KEY}`;
+  const key = await apizeroKey(env);
+  if (key) headers.authorization = `Bearer ${key}`;
   for (let i = 0; i < 2; i++) {
     const r = await fetch(`https://v1.apizero.cn/api/barcode-lookup?barcode=${encodeURIComponent(barcode)}`, { headers });
     if (!r.ok) return null;
@@ -88,6 +101,29 @@ async function lookupApizero(barcode, env) {
     };
   }
   return null;
+}
+
+// 中国物品编码中心官方登记数据（ApiZero 商品条码查询PRO）：免费每天 5 次，超出按次计费，只在其他来源都查不到时用
+async function lookupGs1(barcode, env) {
+  const key = await apizeroKey(env);
+  if (!key || !/^\d{8,14}$/.test(barcode)) return null;
+  const r = await fetch(`https://v1.apizero.cn/api/barcode-gs1?code=${encodeURIComponent(barcode)}`, {
+    headers: { 'user-agent': 'store-pos-worker', authorization: `Bearer ${key}` },
+  });
+  const j = await r.json().catch(() => null);
+  if (!j || j.code !== 0 || !j.data) return j && (j.code === 4030 || j.code === 4022) ? { quota: true } : null;
+  const d = j.data;
+  if (!d.found) return { found: false };
+  return {
+    found: true,
+    name: d.name || d.general_name || '',
+    brand: d.brand || '',
+    spec: d.specification || d.net_content || '',
+    manufacturer: d.manufacturer || '',
+    price_cents: null,
+    image_url: (d.images && d.images[0]) || null,
+    source: 'gs1',
+  };
 }
 
 async function lookupOff(barcode) {
@@ -173,6 +209,17 @@ async function lookup(barcode, env) {
     }
   } else if (off && off.found && off.name) {
     res = off;
+  }
+  if (!res || !res.found) {
+    // 最后才查编码中心官方数据（有额度限制）
+    try {
+      const g = await lookupGs1(barcode, env);
+      if (g && g.found) res = g;
+      else if (g && g.quota && !(res && res.found)) return { found: false, error: '官方条码库今日免费额度已用完' };
+    } catch (_) {}
+  }
+  if (res && res.found) {
+    // 已找到
   } else if (res || off) {
     res = { found: false };
   } else {
@@ -217,6 +264,32 @@ async function admin(request, env, url) {
   if (!hash || (await sha256(pw)) !== hash) return json({ error: '主账号密码错误' }, 403);
 
   if (url.pathname === '/admin/login') return json({ ok: true });
+
+  // 条码查询 Key（ApiZero）：只回显是否已设置和末 4 位
+  if (url.pathname === '/admin/apizero') {
+    if (request.method === 'POST') {
+      const { key = '' } = await request.json();
+      const k = String(key).trim();
+      if (!k) {
+        await db.prepare(`DELETE FROM config WHERE key = 'apizero_key'`).run();
+        return json({ ok: true, has_key: false });
+      }
+      // 先验证 Key 是否有效（用免费接口试一次）
+      const t = await fetch('https://v1.apizero.cn/api/barcode-lookup?barcode=6921168509256', {
+        headers: { 'user-agent': 'store-pos-worker', authorization: `Bearer ${k}` },
+      });
+      const tj = await t.json().catch(() => ({}));
+      if (tj.code === 4011 || tj.code === 4013 || tj.code === 4015) return json({ error: `Key 无效：${tj.msg || tj.code}` }, 400);
+      await db
+        .prepare(`INSERT INTO config (key, value) VALUES ('apizero_key', ?1) ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
+        .bind(k)
+        .run();
+      await db.prepare(`DELETE FROM barcode_cache WHERE found = 0`).run(); // 之前没查到的重新查
+      return json({ ok: true, has_key: true, tail: k.slice(-4) });
+    }
+    const k = await getConfig(db, 'apizero_key');
+    return json({ has_key: !!k, tail: k ? k.slice(-4) : null });
+  }
 
   if (url.pathname === '/admin/password' && request.method === 'POST') {
     const { password = '' } = await request.json();
