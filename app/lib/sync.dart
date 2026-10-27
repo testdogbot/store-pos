@@ -6,9 +6,11 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
+import 'admin_api.dart';
 import 'db.dart';
 
-/// 与 Cloudflare Worker 同步：推送本地未同步的商品/流水/销售，拉回服务器最新商品和库存。
+/// 与 Cloudflare Worker 同步：推送本地未同步的商品/流水/销售，拉回服务器最新商品。
+/// 店员手机只能新增商品；修改、删除要带主账号密码，服务器会拒绝并把正确数据推回来。
 class SyncService {
   SyncService._();
   static final SyncService instance = SyncService._();
@@ -150,7 +152,11 @@ class SyncService {
       final resp = await http
           .post(
             Uri.parse('$url/sync'),
-            headers: {'content-type': 'application/json', 'authorization': 'Bearer ${await token}'},
+            headers: {
+              'content-type': 'application/json',
+              'authorization': 'Bearer ${await token}',
+              if (AdminApi.instance.password != null) 'x-admin-password': AdminApi.instance.password!,
+            },
             body: jsonEncode({
               'device': await _deviceId(),
               'since': since,
