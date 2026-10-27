@@ -1,14 +1,40 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'sync.dart';
 
-/// 主账号（老板）接口：营业额查看与修改。密码只保存在内存里，退出 App 就要重新输入。
+/// 主账号（老板）接口：营业额查看与修改、删除/修改商品。
+/// 默认密码只在内存里；勾选“这台是老板手机”后记在本机，店员手机不记。
 class AdminApi {
   AdminApi._();
   static final AdminApi instance = AdminApi._();
   String? password;
+
+  bool get isAdmin => password != null;
+
+  /// 启动时读取本机记住的主账号密码。
+  Future<void> loadSaved() async {
+    password ??= (await SharedPreferences.getInstance()).getString('admin_pw');
+  }
+
+  Future<bool> get remembered async => (await SharedPreferences.getInstance()).containsKey('admin_pw');
+
+  Future<void> remember(bool on) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (on && password != null) {
+      await prefs.setString('admin_pw', password!);
+    } else {
+      await prefs.remove('admin_pw');
+    }
+  }
+
+  /// 退出主账号：本机变回店员。
+  Future<void> logout() async {
+    password = null;
+    await (await SharedPreferences.getInstance()).remove('admin_pw');
+  }
 
   Future<Map<String, String>> _headers() async => {
         'authorization': 'Bearer ${await SyncService.instance.token}',
@@ -56,6 +82,7 @@ class AdminApi {
   Future<void> changePassword(String pw) async {
     await _call('POST', '/admin/password', {'password': pw});
     password = pw;
+    if (await remembered) await remember(true);
   }
 
   Future<List<DaySummary>> summary(int days) async {
