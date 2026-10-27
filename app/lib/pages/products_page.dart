@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../admin_api.dart';
 import '../db.dart';
 import '../models.dart';
+import 'admin_page.dart';
 import '../sync.dart';
 import '../theme.dart';
 import '../widgets/product_form.dart';
@@ -61,6 +63,10 @@ class _ProductsPageState extends State<ProductsPage> {
     if (code == null || !mounted) return;
     final existing = await AppDb.instance.findProduct(code);
     if (!mounted) return;
+    if (existing != null && !AdminApi.instance.isAdmin) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('「${existing.name}」已经在商品里了，修改需要主账号')));
+      return;
+    }
     await showProductForm(context, barcode: code, existing: existing);
     SyncService.instance.notifyChanged();
     SyncService.instance.sync();
@@ -112,7 +118,10 @@ class _ProductsPageState extends State<ProductsPage> {
                           decoration: BoxDecoration(color: cs.error, borderRadius: BorderRadius.circular(16)),
                           child: Icon(Icons.delete_outline, color: cs.onError),
                         ),
-                        confirmDismiss: (_) => confirmDeleteProduct(context, p),
+                        confirmDismiss: (_) async =>
+                            await ensureAdmin(context, reason: '删除商品需要主账号密码') &&
+                            context.mounted &&
+                            await confirmDeleteProduct(context, p),
                         onDismissed: (_) async {
                           setState(() => _all.removeWhere((x) => x.barcode == p.barcode));
                           await AppDb.instance.deleteProduct(p.barcode);
@@ -126,6 +135,8 @@ class _ProductsPageState extends State<ProductsPage> {
                         clipBehavior: Clip.antiAlias,
                         child: InkWell(
                           onTap: () async {
+                            if (!await ensureAdmin(context, reason: '店员只能新增商品，修改价格或删除需要主账号密码')) return;
+                            if (!context.mounted) return;
                             await showProductForm(context, barcode: p.barcode, existing: p);
                             SyncService.instance.notifyChanged();
                             SyncService.instance.sync();

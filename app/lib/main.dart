@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'admin_api.dart';
 import 'pages/checkout_page.dart';
 import 'pages/products_page.dart';
 import 'pages/settings_page.dart';
@@ -42,7 +43,7 @@ class _HomeShellState extends State<HomeShell> {
   @override
   void initState() {
     super.initState();
-    SyncService.instance.sync();
+    AdminApi.instance.loadSaved().whenComplete(SyncService.instance.sync);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       Future.delayed(const Duration(seconds: 3), () {
         if (mounted) checkForUpdate(context, silent: true);

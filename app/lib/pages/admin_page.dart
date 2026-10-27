@@ -15,21 +15,30 @@ Future<void> openAdmin(BuildContext context) async {
     }
     return;
   }
-  if (api.password == null) {
-    bool has;
-    try {
-      has = await api.hasAdmin();
-    } catch (e) {
-      if (context.mounted) _snack(context, '$e');
-      return;
-    }
-    if (!context.mounted) return;
-    final ok = await showDialog<bool>(context: context, builder: (_) => _PasswordDialog(setup: !has));
-    if (ok != true) return;
-  }
+  if (!await ensureAdmin(context)) return;
   if (context.mounted) {
     await Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminPage()));
   }
+}
+
+/// 需要主账号权限的操作（删除/修改商品、进后台）先调用它：已登录直接通过，否则弹密码框。
+Future<bool> ensureAdmin(BuildContext context, {String? reason}) async {
+  final api = AdminApi.instance;
+  if (api.isAdmin) return true;
+  if ((await SyncService.instance.token).isEmpty) {
+    if (context.mounted) _snack(context, '请先在设置里填写店铺口令');
+    return false;
+  }
+  bool has;
+  try {
+    has = await api.hasAdmin();
+  } catch (e) {
+    if (context.mounted) _snack(context, '需要联网验证主账号：$e');
+    return false;
+  }
+  if (!context.mounted) return false;
+  final ok = await showDialog<bool>(context: context, builder: (_) => _PasswordDialog(setup: !has, reason: reason));
+  return ok == true;
 }
 
 void _snack(BuildContext context, String text) =>
@@ -38,7 +47,8 @@ void _snack(BuildContext context, String text) =>
 class _PasswordDialog extends StatefulWidget {
   final bool setup;
   final bool change;
-  const _PasswordDialog({this.setup = false, this.change = false});
+  final String? reason;
+  const _PasswordDialog({this.setup = false, this.change = false, this.reason});
   @override
   State<_PasswordDialog> createState() => _PasswordDialogState();
 }
@@ -48,6 +58,7 @@ class _PasswordDialogState extends State<_PasswordDialog> {
   final _pw2 = TextEditingController();
   String? _err;
   bool _busy = false;
+  bool _remember = false;
   bool get _twice => widget.setup || widget.change;
 
   Future<void> _submit() async {
@@ -72,6 +83,7 @@ class _PasswordDialogState extends State<_PasswordDialog> {
       } else {
         await AdminApi.instance.login(pw);
       }
+      if (!widget.change) await AdminApi.instance.remember(_remember);
       if (mounted) Navigator.pop(context, true);
     } catch (e) {
       setState(() {
@@ -87,6 +99,8 @@ class _PasswordDialogState extends State<_PasswordDialog> {
       icon: const Icon(Icons.admin_panel_settings_outlined),
       title: Text(widget.change ? '修改主账号密码' : widget.setup ? '设置主账号密码' : '主账号登录'),
       content: Column(mainAxisSize: MainAxisSize.min, children: [
+        if (widget.reason != null)
+          Padding(padding: const EdgeInsets.only(bottom: 12), child: Text(widget.reason!)),
         if (widget.setup)
           const Padding(
             padding: EdgeInsets.only(bottom: 12),
@@ -111,6 +125,15 @@ class _PasswordDialogState extends State<_PasswordDialog> {
             onSubmitted: (_) => _submit(),
           ),
         ],
+        if (!widget.change)
+          CheckboxListTile(
+            value: _remember,
+            onChanged: (v) => setState(() => _remember = v ?? false),
+            contentPadding: EdgeInsets.zero,
+            controlAffinity: ListTileControlAffinity.leading,
+            title: const Text('这是老板手机，记住密码'),
+            subtitle: const Text('店员手机不要勾'),
+          ),
         if (_err != null)
           Padding(
             padding: const EdgeInsets.only(top: 10),
@@ -142,9 +165,9 @@ class _AdminPageState extends State<AdminPage> {
           IconButton(
             tooltip: '退出主账号',
             icon: const Icon(Icons.logout),
-            onPressed: () {
-              AdminApi.instance.password = null;
-              Navigator.pop(context);
+            onPressed: () async {
+              await AdminApi.instance.logout();
+              if (context.mounted) Navigator.pop(context);
             },
           ),
         ],
