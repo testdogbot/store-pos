@@ -125,6 +125,13 @@ async function lookupLocalDb(barcode) {
 }
 
 async function lookup(barcode, env) {
+  // 店里已经录过的商品（扫码录入的名称和售价）优先
+  const own = await env.DB.prepare(`SELECT name, price_cents FROM products WHERE barcode = ?1 AND deleted = 0`)
+    .bind(barcode)
+    .first();
+  if (own && own.name && own.name !== barcode) {
+    return { found: true, name: own.name, display_name: own.name, price_cents: own.price_cents, source: 'shop' };
+  }
   const cached = await env.DB.prepare(`SELECT data, found, updated_at FROM barcode_cache WHERE barcode = ?1`)
     .bind(barcode)
     .first();
@@ -358,7 +365,10 @@ export default {
     if (url.pathname.startsWith('/admin/')) return admin(request, env, url);
 
     if (url.pathname === '/sync' && request.method === 'POST') {
-      return sync(await request.json(), env.DB);
+      const hash = await getConfig(env.DB, 'admin_hash');
+      const pw = request.headers.get('x-admin-password') || '';
+      const isAdmin = !!hash && !!pw && (await sha256(pw)) === hash;
+      return sync(await request.json(), env.DB, isAdmin);
     }
 
     const lk = url.pathname.match(/^\/lookup\/([^/]+)$/);
@@ -415,14 +425,33 @@ function toMs(v, fallback) {
   return Number.isFinite(n) && n > 1e12 ? n : fallback;
 }
 
-async function sync(body, db) {
+async function sync(body, db, isAdmin = false) {
   const { device = '', since = 0, products = [], movements = [], sales = [] } = body || {};
   const now = Date.now();
   const stmts = [];
 
   // 1. 商品资料（名称/价格）：最后同步的为准，不碰库存（库存只由流水决定）
+  //    店员（不带主账号密码）只能新增商品，或重新添加已删除的；修改/删除已有商品会被忽略，
+  //    并刷新 updated_at，让那台手机拉回服务器上的正确数据。
   for (const p of products) {
     if (!p.barcode || !p.name) continue;
+    if (!isAdmin) {
+      if (p.deleted) {
+        stmts.push(db.prepare(`UPDATE products SET updated_at = ?2 WHERE barcode = ?1`).bind(p.barcode, now));
+        continue;
+      }
+      stmts.push(
+        db.prepare(
+          `INSERT INTO products (barcode, name, price_cents, stock, updated_at, deleted)
+           VALUES (?1, ?2, ?3, 0, ?4, 0)
+           ON CONFLICT(barcode) DO UPDATE SET
+             name = excluded.name, price_cents = excluded.price_cents, deleted = 0, updated_at = ?4
+           WHERE products.deleted = 1`
+        ).bind(p.barcode, p.name, p.price_cents | 0, now)
+      );
+      stmts.push(db.prepare(`UPDATE products SET updated_at = ?2 WHERE barcode = ?1`).bind(p.barcode, now));
+      continue;
+    }
     stmts.push(
       db.prepare(
         `INSERT INTO products (barcode, name, price_cents, stock, updated_at, deleted)
