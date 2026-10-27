@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../admin_api.dart';
 import '../sync.dart';
 import '../update_check.dart';
 import 'admin_page.dart';
@@ -19,6 +20,8 @@ class _SettingsPageState extends State<SettingsPage> {
   String _version = '';
   bool _showToken = false;
   bool _saving = false;
+  String? _azTail; // 条码查询 Key 末 4 位
+  bool _azLoaded = false;
 
   @override
   void initState() {
@@ -28,6 +31,7 @@ class _SettingsPageState extends State<SettingsPage> {
       _token.text = await SyncService.instance.token;
       final v = await currentVersion();
       if (mounted) setState(() => _version = 'v${v.name}（构建 ${v.build}）');
+      if (widget.embedded) _loadAz();
     }();
   }
 
@@ -39,6 +43,53 @@ class _SettingsPageState extends State<SettingsPage> {
     setState(() => _saving = false);
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err ?? '已保存并同步成功')));
     if (err == null && widget.firstRun) Navigator.pop(context);
+  }
+
+  Future<void> _loadAz() async {
+    try {
+      final t = await AdminApi.instance.apizeroTail();
+      if (mounted) setState(() {
+        _azTail = t;
+        _azLoaded = true;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _azLoaded = true);
+    }
+  }
+
+  Future<void> _editAz() async {
+    final c = TextEditingController();
+    final key = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('官方条码库 Key'),
+        content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('在 apizero.cn 注册登录 → 控制台 → API Key，复制后粘贴到这里。填好后扫不到的商品会去中国物品编码中心官方数据里查（每天免费 5 次）。'),
+          const SizedBox(height: 12),
+          TextField(
+            controller: c,
+            autofocus: true,
+            decoration: const InputDecoration(labelText: 'API Key', prefixIcon: Icon(Icons.vpn_key_outlined)),
+          ),
+        ]),
+        actions: [
+          if (_azTail != null)
+            TextButton(onPressed: () => Navigator.pop(ctx, ''), child: const Text('清除')),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, c.text.trim()), child: const Text('保存')),
+        ],
+      ),
+    );
+    if (key == null || !mounted) return;
+    try {
+      final t = await AdminApi.instance.setApizeroKey(key);
+      if (!mounted) return;
+      setState(() => _azTail = t);
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(t == null ? '已清除' : '已保存，Key 有效')));
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+    }
   }
 
   String _ago(DateTime t) {
@@ -142,6 +193,21 @@ class _SettingsPageState extends State<SettingsPage> {
               subtitle: const Text('进入老板后台时使用'),
               trailing: const Icon(Icons.chevron_right),
               onTap: () => changeAdminPassword(context),
+            ),
+          ]),
+        if (widget.embedded)
+          _section('条码识别', [
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.qr_code_2, color: cs.primary),
+              title: const Text('官方条码库（中国物品编码中心）'),
+              subtitle: Text(!_azLoaded
+                  ? '读取中…'
+                  : _azTail == null
+                      ? '未设置 Key，点此填写'
+                      : '已启用 · Key 尾号 $_azTail'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: _editAz,
             ),
           ]),
 
