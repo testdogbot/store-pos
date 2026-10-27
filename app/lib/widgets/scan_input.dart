@@ -227,7 +227,12 @@ class CameraScanPage extends StatefulWidget {
 }
 
 class _CameraScanPageState extends State<CameraScanPage> {
-  final _controller = MobileScannerController(formats: const [
+  // 不限速：每一帧都识别（默认 normal 模式每 250ms 才认一次）；先不自动启动，选好近距镜头再开
+  final _controller = MobileScannerController(
+      autoStart: false,
+      detectionSpeed: DetectionSpeed.unrestricted,
+      autoZoom: true,
+      formats: const [
     BarcodeFormat.ean13,
     BarcodeFormat.ean8,
     BarcodeFormat.upcA,
@@ -236,6 +241,28 @@ class _CameraScanPageState extends State<CameraScanPage> {
     BarcodeFormat.code39,
     BarcodeFormat.qrCode,
   ]);
+
+  @override
+  void initState() {
+    super.initState();
+    // 等 MobileScanner 挂上控制器后再启动
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startCamera());
+  }
+
+  /// 有微距/超广角等更适合近距离对焦的镜头就用它，失败则回落默认镜头。
+  Future<void> _startCamera() async {
+    try {
+      final best = await _controller.getBestCloseRangeScanningLens();
+      final supported = await _controller.getSupportedLenses(facing: CameraFacing.back);
+      if (best != null && best != CameraLensType.any && supported.contains(best)) {
+        await _controller.start(cameraLensType: best);
+        if (_controller.value.isRunning) return;
+      }
+    } catch (_) {}
+    try {
+      if (!_controller.value.isRunning) await _controller.start();
+    } catch (_) {}
+  }
 
   bool _busy = false;
   String? _lastCode;
