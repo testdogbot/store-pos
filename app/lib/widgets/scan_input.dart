@@ -249,8 +249,16 @@ class _CameraScanPageState extends State<CameraScanPage> {
   static const _minRepeat = Duration(milliseconds: 1200); // 同码两次计数最短间隔
 
   Future<void> _onDetect(BarcodeCapture capture) async {
-    final code = capture.barcodes.firstOrNull?.rawValue?.trim();
-    if (code == null || code.isEmpty) return;
+    if (_busy) return;
+    String? code;
+    for (final b in capture.barcodes) {
+      final v = b.rawValue?.trim();
+      if (v == null || v.isEmpty) continue;
+      if (!isPlausibleBarcode(v, b.format)) continue; // 校验位不对 = 扫错了，直接丢弃等下一帧
+      code = v;
+      break;
+    }
+    if (code == null) return;
     final now = DateTime.now();
 
     if (code == _lastCode) {
@@ -272,8 +280,7 @@ class _CameraScanPageState extends State<CameraScanPage> {
     }
 
     try {
-      // 处理期间暂停相机（比如新商品要弹出建档表单）
-      await _controller.stop();
+      // 不再停开相机（重启相机要近一秒），处理期间靠 _busy 忽略新画面
       final msg = await widget.onCode(code);
       if (!mounted) return;
       setState(() {
@@ -288,7 +295,6 @@ class _CameraScanPageState extends State<CameraScanPage> {
       });
     } finally {
       _lastSeen = DateTime.now();
-      if (mounted) await _controller.start();
       _busy = false;
     }
   }
@@ -387,4 +393,35 @@ class _ScanInputState extends State<ScanInput> {
       ),
     );
   }
+}
+
+
+/// 商品条码校验：EAN-13 / EAN-8 / UPC-A 必须校验位正确；UPC-E 只看长度；
+/// 其他码制（店内码、二维码）不校验。
+bool isPlausibleBarcode(String v, BarcodeFormat f) {
+  final digits = RegExp(r'^\d+$').hasMatch(v);
+  switch (f) {
+    case BarcodeFormat.ean13:
+      return digits && v.length == 13 && gtinCheckOk(v);
+    case BarcodeFormat.ean8:
+      return digits && v.length == 8 && gtinCheckOk(v);
+    case BarcodeFormat.upcA:
+      return digits && (v.length == 12 || v.length == 13) && gtinCheckOk(v);
+    case BarcodeFormat.upcE:
+      return digits && (v.length == 6 || v.length == 7 || v.length == 8);
+    default:
+      if (digits && (v.length == 8 || v.length == 12 || v.length == 13)) return gtinCheckOk(v);
+      return true;
+  }
+}
+
+/// GTIN 通用校验位算法（适用于 8/12/13/14 位）。
+bool gtinCheckOk(String v) {
+  var sum = 0;
+  final body = v.substring(0, v.length - 1);
+  for (var i = 0; i < body.length; i++) {
+    final d = body.codeUnitAt(body.length - 1 - i) - 48;
+    sum += (i % 2 == 0) ? d * 3 : d;
+  }
+  return (10 - sum % 10) % 10 == v.codeUnitAt(v.length - 1) - 48;
 }
