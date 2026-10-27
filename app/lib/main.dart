@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'pages/checkout_page.dart';
 import 'pages/products_page.dart';
 import 'pages/settings_page.dart';
-import 'pages/stock_in_page.dart';
 import 'sync.dart';
 import 'theme.dart';
 import 'update_check.dart';
@@ -55,7 +54,7 @@ class _HomeShellState extends State<HomeShell> {
         }
       });
     });
-    // 每分钟后台同步一次，拿到其他收银机的库存变化
+    // 每分钟后台同步一次，拿到其他收银机的商品和价格变化
     _timer = Timer.periodic(const Duration(minutes: 1), (_) => SyncService.instance.sync());
   }
 
@@ -67,7 +66,7 @@ class _HomeShellState extends State<HomeShell> {
 
   @override
   Widget build(BuildContext context) {
-    const pages = [CheckoutPage(), StockInPage(), ProductsPage()];
+    const pages = [CheckoutPage(), ProductsPage()];
     return Scaffold(
       body: IndexedStack(index: _index, children: pages),
       bottomNavigationBar: NavigationBar(
@@ -76,8 +75,6 @@ class _HomeShellState extends State<HomeShell> {
         destinations: const [
           NavigationDestination(
               icon: Icon(Icons.point_of_sale_outlined), selectedIcon: Icon(Icons.point_of_sale), label: '收银'),
-          NavigationDestination(
-              icon: Icon(Icons.inventory_2_outlined), selectedIcon: Icon(Icons.inventory_2), label: '入库'),
           NavigationDestination(
               icon: Icon(Icons.category_outlined), selectedIcon: Icon(Icons.category), label: '商品'),
         ],
