@@ -72,7 +72,6 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
   late final _name = TextEditingController(text: widget.existing?.name ?? '');
   late final _price = TextEditingController(
       text: widget.existing == null ? '' : (widget.existing!.priceCents / 100).toStringAsFixed(2));
-  late final _qty = TextEditingController(text: widget.existing == null ? '0' : '${widget.existing!.stock}');
   final _formKey = GlobalKey<FormState>();
   final _priceFocus = FocusNode();
   Uint8List? _newImage;
@@ -130,12 +129,6 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
     );
     await AppDb.instance.saveProduct(prod);
     if (_newImage != null) await AppDb.instance.saveImageBytes(barcode, _newImage!);
-    final q = int.parse(_qty.text);
-    if (existing == null) {
-      if (q != 0) await AppDb.instance.stockIn(barcode, q);
-    } else {
-      await AppDb.instance.setStock(barcode, q);
-    }
     final saved = await AppDb.instance.findProduct(barcode);
     if (mounted) Navigator.pop(context, saved);
   }
@@ -218,13 +211,6 @@ class _ProductFormDialogState extends State<_ProductFormDialog> {
                   ),
                 ),
               ),
-            const SizedBox(height: 10),
-            TextFormField(
-              controller: _qty,
-              keyboardType: TextInputType.number,
-              decoration: InputDecoration(labelText: existing == null ? '初始库存' : '实际库存（盘点）'),
-              validator: (v) => int.tryParse(v ?? '') == null ? '请填写整数' : null,
-            ),
           ]),
         ),
       ),

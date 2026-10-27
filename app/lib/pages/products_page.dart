@@ -8,8 +8,6 @@ import '../widgets/product_form.dart';
 import '../widgets/product_thumb.dart';
 import '../widgets/scan_input.dart';
 
-enum _Filter { all, low, out }
-
 class ProductsPage extends StatefulWidget {
   const ProductsPage({super.key});
   @override
@@ -19,7 +17,6 @@ class ProductsPage extends StatefulWidget {
 class _ProductsPageState extends State<ProductsPage> {
   List<Product> _all = [];
   String _keyword = '';
-  _Filter _filter = _Filter.all;
 
   @override
   void initState() {
@@ -39,11 +36,7 @@ class _ProductsPageState extends State<ProductsPage> {
     if (mounted) setState(() => _all = items);
   }
 
-  List<Product> get _shown => switch (_filter) {
-        _Filter.all => _all,
-        _Filter.low => _all.where((p) => p.stock > 0 && p.stock <= 5).toList(),
-        _Filter.out => _all.where((p) => p.stock <= 0).toList(),
-      };
+  List<Product> get _shown => _all;
 
   Future<void> _refresh() async {
     final err = await SyncService.instance.sync();
@@ -76,11 +69,9 @@ class _ProductsPageState extends State<ProductsPage> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final lowN = _all.where((p) => p.stock > 0 && p.stock <= 5).length;
-    final outN = _all.where((p) => p.stock <= 0).length;
     final shown = _shown;
     return Scaffold(
-      appBar: AppBar(title: const Text('商品与库存')),
+      appBar: AppBar(title: Text('商品（${_all.length}）')),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _add,
         icon: const Icon(Icons.add),
@@ -96,28 +87,6 @@ class _ProductsPageState extends State<ProductsPage> {
               _load();
             },
           ),
-        ),
-        SizedBox(
-          height: 44,
-          child: ListView(scrollDirection: Axis.horizontal, padding: const EdgeInsets.symmetric(horizontal: 16), children: [
-            ChoiceChip(
-              label: Text('全部 ${_all.length}'),
-              selected: _filter == _Filter.all,
-              onSelected: (_) => setState(() => _filter = _Filter.all),
-            ),
-            const SizedBox(width: 8),
-            ChoiceChip(
-              label: Text('库存紧张 $lowN'),
-              selected: _filter == _Filter.low,
-              onSelected: (_) => setState(() => _filter = _Filter.low),
-            ),
-            const SizedBox(width: 8),
-            ChoiceChip(
-              label: Text('缺货 $outN'),
-              selected: _filter == _Filter.out,
-              onSelected: (_) => setState(() => _filter = _Filter.out),
-            ),
-          ]),
         ),
         Expanded(
           child: RefreshIndicator(
@@ -176,12 +145,8 @@ class _ProductsPageState extends State<ProductsPage> {
                                   Text(p.barcode, style: TextStyle(color: cs.onSurfaceVariant, fontSize: 12)),
                                 ]),
                               ),
-                              Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                                Text(yuan(p.priceCents),
-                                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: cs.primary)),
-                                const SizedBox(height: 4),
-                                StockChip(p.stock),
-                              ]),
+                              Text(yuan(p.priceCents),
+                                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: cs.primary)),
                             ]),
                           ),
                         ),

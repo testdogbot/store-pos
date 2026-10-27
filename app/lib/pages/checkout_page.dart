@@ -51,13 +51,12 @@ class _CheckoutPageState extends State<CheckoutPage> {
     final ok = await showDialog<bool>(context: context, builder: (_) => _PayDialog(total: _total));
     if (ok != true) return;
     await AppDb.instance.checkout(_cart);
-    final low = _cart.where((i) => i.product.stock - i.qty <= 0).map((i) => i.product.name).toList();
     final total = _total;
     setState(_cart.clear);
     SyncService.instance.notifyChanged();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(low.isEmpty ? '收款 ${yuan(total)}，结账完成' : '结账完成。已缺货：${low.join('、')}'),
+      content: Text('收款 ${yuan(total)}，结账完成'),
     ));
     SyncService.instance.sync();
   }

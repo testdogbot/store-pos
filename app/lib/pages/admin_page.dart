@@ -267,7 +267,7 @@ class _RevenueTabState extends State<_RevenueTab> {
         if (restock == null) return;
         await AdminApi.instance.deleteSale(s.id, restock: restock);
         await SyncService.instance.syncNow();
-        if (mounted) _snack(context, restock ? '已删除，库存已退回' : '已删除');
+        if (mounted) _snack(context, '已删除');
       }
       await _load(keepSelection: true);
     } catch (e) {
@@ -275,9 +275,9 @@ class _RevenueTabState extends State<_RevenueTab> {
     }
   }
 
-  /// 返回 null=取消，true=删除并退回库存，false=只删记录
+  /// 返回 null=取消，false=删除（已不再管理库存）
   Future<bool?> _confirmDelete(SaleRecord s) {
-    var restock = s.items.isNotEmpty;
+    const restock = false;
     return showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
@@ -285,13 +285,6 @@ class _RevenueTabState extends State<_RevenueTab> {
           title: const Text('删除这笔营业额？'),
           content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text('${_md(s.at)} ${_hm(s.at)}  ${yuan(s.totalCents)}'),
-            if (s.items.isNotEmpty)
-              CheckboxListTile(
-                contentPadding: EdgeInsets.zero,
-                value: restock,
-                onChanged: (v) => set(() => restock = v ?? false),
-                title: const Text('同时把商品退回库存'),
-              ),
           ]),
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
