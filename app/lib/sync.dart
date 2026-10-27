@@ -71,8 +71,11 @@ class SyncService {
           [ver, ver, barcode, path]);
     }
 
+    // 一次把缺的图全部下完（每批 30 张，最多 40 批），新换的图也会马上更新到这台手机
+    for (var round = 0; round < 40; round++) {
     final need = await db.query('products',
         columns: ['barcode', 'image_ver'], where: 'image_ver > image_local_ver AND image_dirty = 0', limit: 30);
+    if (need.isEmpty) break;
     for (final r in need) {
       final barcode = r['barcode'] as String;
       final resp = await http
@@ -85,6 +88,8 @@ class SyncService {
       if (resp.statusCode != 200) return '图片下载失败：HTTP ${resp.statusCode}';
       final ver = int.tryParse(resp.headers['x-image-ver'] ?? '') ?? (r['image_ver'] as num).toInt();
       await AppDb.instance.saveImageBytes(barcode, resp.bodyBytes, fromServer: true, ver: ver);
+    }
+    notifyChanged(); // 每下完一批就刷新列表，图片陆续出现
     }
     return null;
   }
