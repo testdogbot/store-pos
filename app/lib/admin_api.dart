@@ -58,6 +58,17 @@ class AdminApi {
     password = pw;
   }
 
+  /// 条码查询 Key（ApiZero）：返回 null 表示未设置，否则返回末 4 位
+  Future<String?> apizeroTail() async {
+    final d = await _call('GET', '/admin/apizero');
+    return d['has_key'] == true ? (d['tail'] as String? ?? '****') : null;
+  }
+
+  Future<String?> setApizeroKey(String key) async {
+    final d = await _call('POST', '/admin/apizero', {'key': key});
+    return d['has_key'] == true ? d['tail'] as String? : null;
+  }
+
   Future<List<DaySummary>> summary(int days) async {
     final d = await _call('GET', '/admin/summary?days=$days');
     return [
