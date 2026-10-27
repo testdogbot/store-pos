@@ -163,6 +163,11 @@ class _AdminPageState extends State<AdminPage> {
         title: const Text('老板后台'),
         actions: [
           IconButton(
+            tooltip: '一键补齐商品图片',
+            icon: const Icon(Icons.image_search),
+            onPressed: () => _backfillImages(context),
+          ),
+          IconButton(
             tooltip: '退出主账号',
             icon: const Icon(Icons.logout),
             onPressed: () async {
@@ -182,6 +187,38 @@ class _AdminPageState extends State<AdminPage> {
         ],
       ),
     );
+  }
+}
+
+/// 一键补图：服务器从条码库找图，完成后同步一次让本机下载。
+Future<void> _backfillImages(BuildContext context) async {
+  final progress = ValueNotifier('正在查找商品图片…');
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => AlertDialog(
+      content: Row(children: [
+        const CircularProgressIndicator(),
+        const SizedBox(width: 16),
+        Expanded(child: ValueListenableBuilder(valueListenable: progress, builder: (_, v, __) => Text(v))),
+      ]),
+    ),
+  );
+  try {
+    final r = await AdminApi.instance.backfillImages(
+        onProgress: (n, rest) => progress.value = '已补 $n 张，还剩 $rest 个商品待查…');
+    await SyncService.instance.syncNow();
+    if (context.mounted) {
+      Navigator.pop(context);
+      _snack(context, r.missed.isEmpty
+          ? '已补齐 ${r.filled} 张图片'
+          : '补上 ${r.filled} 张，${r.missed.length} 个商品条码库里没有图，需要手动拍照');
+    }
+  } catch (e) {
+    if (context.mounted) {
+      Navigator.pop(context);
+      _snack(context, '补图失败：$e');
+    }
   }
 }
 

@@ -232,6 +232,37 @@ async function admin(request, env, url) {
     return json({ ok: true });
   }
 
+  // 一键补图：给还没有图片的商品，从条码库（Open Food Facts）找图存进 D1。
+  // 分批处理（免费版每次请求最多 50 个子请求），App 用 next 游标循环调用直到 next 为 null。
+  if (url.pathname === '/admin/backfill-images' && request.method === 'POST') {
+    const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '8', 10) || 8, 1), 15);
+    const after = url.searchParams.get('after') || '';
+    const { results } = await db
+      .prepare(
+        `SELECT barcode FROM products WHERE deleted = 0 AND image_ver = 0 AND barcode > ?1 ORDER BY barcode LIMIT ?2`
+      )
+      .bind(after, limit)
+      .all();
+    let filled = 0;
+    const missed = [];
+    for (const { barcode } of results) {
+      try {
+        if (await backfillImage(barcode, env)) filled++;
+        else missed.push(barcode);
+      } catch (_) {
+        missed.push(barcode);
+      }
+    }
+    const last = results.length ? results[results.length - 1].barcode : null;
+    const rest = last
+      ? await db
+          .prepare(`SELECT COUNT(*) AS n FROM products WHERE deleted = 0 AND image_ver = 0 AND barcode > ?1`)
+          .bind(last)
+          .first()
+      : { n: 0 };
+    return json({ filled, missed, next: results.length === limit ? last : null, remaining: rest.n });
+  }
+
   // 每日汇总：最近 days 天
   if (url.pathname === '/admin/summary') {
     const days = Math.min(Math.max(parseInt(url.searchParams.get('days') || '7', 10), 1), 90);
@@ -332,6 +363,36 @@ async function admin(request, env, url) {
 
 const MAX_IMAGE = 1024 * 1024; // 1 MB，App 端会先压缩到几十 KB
 
+const OFF_IMG = /^https:\/\/images\.openfoodfacts\.org\//;
+
+// 找一张商品图存进 images 表并更新 image_ver，各台手机下次同步时会自动下载。
+async function backfillImage(barcode, env) {
+  const db = env.DB;
+  let imageUrl = null;
+  const cached = await db.prepare(`SELECT data FROM barcode_cache WHERE barcode = ?1`).bind(barcode).first();
+  if (cached) imageUrl = JSON.parse(cached.data).image_url || null;
+  if (!imageUrl) {
+    const off = await lookupOff(barcode);
+    if (off && off.found) imageUrl = off.image_url || null;
+  }
+  if (!imageUrl || !OFF_IMG.test(imageUrl)) return false;
+  const r = await fetch(imageUrl, { cf: { cacheTtl: 86400, cacheEverything: true } });
+  if (!r.ok) return false;
+  const buf = await r.arrayBuffer();
+  if (!buf.byteLength || buf.byteLength > MAX_IMAGE) return false;
+  const mime = r.headers.get('content-type') || 'image/jpeg';
+  const now = Date.now();
+  await db.batch([
+    db.prepare(
+      `INSERT INTO images (barcode, data, mime, updated_at) VALUES (?1, ?2, ?3, ?4)
+       ON CONFLICT(barcode) DO NOTHING`
+    ).bind(barcode, buf, mime, now),
+    // 只在仍然没图时写入，避免覆盖期间店员刚拍的图
+    db.prepare(`UPDATE products SET image_ver = ?2, updated_at = ?2 WHERE barcode = ?1 AND image_ver = 0`).bind(barcode, now),
+  ]);
+  return true;
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -378,7 +439,7 @@ export default {
     // 商品图片代理（Open Food Facts 图片国内直连慢）
     if (url.pathname === '/proxy-image' && request.method === 'GET') {
       const src = url.searchParams.get('url') || '';
-      if (!/^https:\/\/images\.openfoodfacts\.org\//.test(src)) return json({ error: 'bad url' }, 400);
+      if (!OFF_IMG.test(src)) return json({ error: 'bad url' }, 400);
       const r = await fetch(src, { cf: { cacheTtl: 86400, cacheEverything: true } });
       return new Response(r.body, { status: r.status, headers: { 'content-type': r.headers.get('content-type') || 'image/jpeg' } });
     }

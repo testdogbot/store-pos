@@ -104,6 +104,21 @@ class AdminApi {
       _call('PUT', '/admin/sales/${Uri.encodeComponent(id)}', {'total_cents': totalCents, 'note': note});
   Future<void> deleteSale(String id, {bool restock = false}) =>
       _call('DELETE', '/admin/sales/${Uri.encodeComponent(id)}${restock ? '?restock=1' : ''}');
+  /// 一键补图：服务器分批给没图的商品找图，返回补上的数量和仍缺图的条码。
+  Future<({int filled, List<String> missed})> backfillImages({void Function(int filled, int remaining)? onProgress}) async {
+    var filled = 0;
+    final missed = <String>[];
+    String? after = '';
+    while (after != null) {
+      final d = await _call('POST', '/admin/backfill-images?limit=8&after=${Uri.encodeComponent(after)}');
+      filled += (d['filled'] as num).toInt();
+      missed.addAll((d['missed'] as List).cast<String>());
+      after = d['next'] as String?;
+      onProgress?.call(filled, (d['remaining'] as num).toInt());
+    }
+    return (filled: filled, missed: missed);
+  }
+
   Future<void> addSale(int totalCents, String note, DateTime at) =>
       _call('POST', '/admin/sales', {'total_cents': totalCents, 'note': note, 'created_at': at.millisecondsSinceEpoch});
 }

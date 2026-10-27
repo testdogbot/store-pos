@@ -114,7 +114,8 @@ class SyncService {
     final url = await serverUrl;
     try {
       final r = await http
-          .get(Uri.parse('$url/proxy-image?url=${Uri.encodeComponent(imageUrl)}'))
+          .get(Uri.parse('$url/proxy-image?url=${Uri.encodeComponent(imageUrl)}'),
+              headers: {'authorization': 'Bearer ${await token}'})
           .timeout(const Duration(seconds: 15));
       return r.statusCode == 200 && r.bodyBytes.isNotEmpty ? r.bodyBytes : null;
     } catch (_) {
